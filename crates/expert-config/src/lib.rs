@@ -90,6 +90,6 @@ where
 {
     env::var(key)
         .ok()
-        .map(|v| v.parse().expect(&format!("{key} must be valid")))
+        .map(|v| v.parse().unwrap_or_else(|_| panic!("{key} must be valid")))
         .unwrap_or(default)
 }
