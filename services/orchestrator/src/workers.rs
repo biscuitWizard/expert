@@ -75,6 +75,23 @@ pub async fn spawn_fire_consumer(state: Arc<AppState>) {
 }
 
 async fn handle_fire_signal(state: &AppState, signal: FireSignal, _ttl_ms: u64) {
+    state
+        .event_log
+        .push(
+            "fire_received",
+            format!(
+                "Fire signal for {} (goals: {})",
+                &signal.activity_id[..signal.activity_id.len().min(8)],
+                signal.firing_goal_ids.len()
+            ),
+            Some(serde_json::json!({
+                "activity_id": signal.activity_id,
+                "firing_goal_ids": signal.firing_goal_ids,
+                "scores": signal.scores,
+            })),
+        )
+        .await;
+
     let now = now_ms();
     let mut registry = state.registry.write().await;
 
@@ -126,6 +143,17 @@ async fn handle_fire_signal(state: &AppState, signal: FireSignal, _ttl_ms: u64) 
             activity_id = %assemble_req.activity_id,
             "dispatched context assembly request"
         );
+        state
+            .event_log
+            .push(
+                "context_dispatched",
+                format!("Context assembly for {}", &assemble_req.activity_id[..8]),
+                Some(serde_json::json!({
+                    "activity_id": assemble_req.activity_id,
+                    "stream_id": assemble_req.stream_id,
+                })),
+            )
+            .await;
     }
 }
 
@@ -141,6 +169,17 @@ async fn drain_stale_fires(state: &AppState, ttl_ms: u64) {
                 activity_id = %activity.state.activity_id,
                 "dropping stale fire signal"
             );
+            state
+                .event_log
+                .push(
+                    "stale_fire_dropped",
+                    format!(
+                        "Stale fire dropped for {}",
+                        &activity.state.activity_id[..8]
+                    ),
+                    Some(serde_json::json!({"activity_id": activity.state.activity_id})),
+                )
+                .await;
             activity.pending_fire = None;
             if activity.state.lifecycle_state == ActivityLifecycle::Fired {
                 activity.state.lifecycle_state = ActivityLifecycle::Active;
@@ -231,15 +270,16 @@ async fn handle_goal_update(state: &AppState, req: GoalUpdateRequest) {
         }
     };
 
+    let is_update = req.target_goal_id.is_some();
+    let description_for_log = req.description.clone();
+
     if let Some(target_id) = &req.target_goal_id {
-        // Update existing goal
         if let Some(goal) = activity.goals.iter_mut().find(|g| &g.id == target_id) {
             goal.description = req.description;
             goal.embedding = embedding.clone();
             goal.version += 1;
         }
     } else {
-        // Add new goal
         let now = now_ms();
         let new_goal = expert_types::goal::Goal {
             id: uuid::Uuid::new_v4().to_string(),
@@ -260,7 +300,6 @@ async fn handle_goal_update(state: &AppState, req: GoalUpdateRequest) {
         activity.goals.push(new_goal);
     }
 
-    // Rebuild goal matrix
     let goal_matrix: Vec<f32> = activity
         .goals
         .iter()
@@ -271,14 +310,12 @@ async fn handle_goal_update(state: &AppState, req: GoalUpdateRequest) {
     activity.state.goal_indices = goal_indices;
     activity.state.theta.resize(activity.goals.len(), 0.5);
 
-    // Send goal matrix update to worker
     let worker_id = activity.worker_id.clone();
     let goals_snapshot = activity.goals.clone();
     drop(registry);
 
     let mut producer = state.producer.write().await;
 
-    // Notify worker
     let cmd = serde_json::json!({
         "type": "goal_update",
         "activity_id": req.activity_id,
@@ -288,11 +325,35 @@ async fn handle_goal_update(state: &AppState, req: GoalUpdateRequest) {
         .publish(&names::commands_worker(&worker_id), &cmd)
         .await;
 
-    // Persist to RAG
     for goal in &goals_snapshot {
         let _ = producer.publish(names::GOALS_WRITE, goal).await;
     }
 
+    let kind = if is_update {
+        "goal_updated"
+    } else {
+        "goal_added"
+    };
+    state
+        .event_log
+        .push(
+            kind,
+            format!(
+                "{} on activity {}",
+                if is_update {
+                    "Goal updated"
+                } else {
+                    "Goal added"
+                },
+                &req.activity_id[..8]
+            ),
+            Some(serde_json::json!({
+                "activity_id": req.activity_id,
+                "target_goal_id": req.target_goal_id,
+                "description": description_for_log,
+            })),
+        )
+        .await;
     info!(activity_id = %req.activity_id, "goal update propagated");
 }
 
@@ -388,6 +449,22 @@ async fn handle_checkpoint(state: &AppState, notification: CheckpointAvailable) 
                 activities = activity_ids.len(),
                 "dispatched checkpoint reload"
             );
+            state
+                .event_log
+                .push(
+                    "checkpoint_reload",
+                    format!(
+                        "Checkpoint reload to {} ({} activities)",
+                        worker_id,
+                        activity_ids.len()
+                    ),
+                    Some(serde_json::json!({
+                        "checkpoint_id": notification.checkpoint_id,
+                        "worker_id": worker_id,
+                        "activity_count": activity_ids.len(),
+                    })),
+                )
+                .await;
         }
     }
 }

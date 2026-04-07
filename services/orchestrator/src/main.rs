@@ -1,12 +1,15 @@
 mod api;
+pub mod event_log;
+mod panel;
 mod registry;
 mod workers;
 
 use anyhow::Result;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use tracing::info;
+use tracing::{info, warn};
 
+use event_log::EventLog;
 use expert_config::Config;
 use expert_redis::StreamProducer;
 use registry::ActivityRegistry;
@@ -16,6 +19,7 @@ pub struct AppState {
     pub registry: RwLock<ActivityRegistry>,
     pub producer: RwLock<StreamProducer>,
     pub state_store: RwLock<expert_redis::StateStore>,
+    pub event_log: Arc<EventLog>,
 }
 
 #[tokio::main]
@@ -27,12 +31,31 @@ async fn main() -> Result<()> {
     let conn = expert_redis::connect(&config.redis_url).await?;
     let producer = StreamProducer::new(conn.clone(), config.stream_maxlen);
     let state_store = expert_redis::StateStore::new(conn.clone());
+    let event_log = Arc::new(EventLog::new());
+
+    let panel_enabled = config.panel_user.is_some() && config.panel_pass.is_some();
+
+    let qdrant_client = if panel_enabled {
+        match qdrant_client::Qdrant::from_url(&config.qdrant_url).build() {
+            Ok(client) => {
+                info!("qdrant client connected for debug panel");
+                Some(client)
+            }
+            Err(e) => {
+                warn!(error = %e, "failed to create qdrant client for panel — graph explorer will be unavailable");
+                None
+            }
+        }
+    } else {
+        None
+    };
 
     let state = Arc::new(AppState {
         config,
         registry: RwLock::new(ActivityRegistry::new()),
         producer: RwLock::new(producer),
         state_store: RwLock::new(state_store),
+        event_log: event_log.clone(),
     });
 
     // Spawn background workers
@@ -42,8 +65,17 @@ async fn main() -> Result<()> {
     workers::spawn_threshold_feedback_task(state.clone()).await;
     workers::spawn_filter_update_consumer(state.clone()).await;
 
-    // Start HTTP server
-    let app = api::router(state);
+    // Build HTTP router
+    let app = if panel_enabled {
+        info!("debug panel enabled at /panel");
+        event_log
+            .push("panel_started", "Debug panel enabled", None)
+            .await;
+        api::router(state.clone()).merge(panel::router(state, qdrant_client))
+    } else {
+        api::router(state)
+    };
+
     let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await?;
     info!("orchestrator REST API listening on :3000");
     axum::serve(listener, app).await?;

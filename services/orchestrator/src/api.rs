@@ -202,6 +202,23 @@ async fn create_activity(
     }
 
     info!(activity_id = %response.activity_id, "activity created");
+    state
+        .event_log
+        .push(
+            "activity_created",
+            format!(
+                "Activity {} on stream {}",
+                &response.activity_id[..8],
+                response.stream_id
+            ),
+            Some(serde_json::json!({
+                "activity_id": response.activity_id,
+                "stream_id": response.stream_id,
+                "domain": response.domain,
+                "goal_count": response.goal_count,
+            })),
+        )
+        .await;
     (
         StatusCode::CREATED,
         Json(serde_json::to_value(response).unwrap()),
@@ -274,6 +291,14 @@ async fn delete_activity(
             let _ = store.del(&names::assignment_key(&id)).await;
             let _ = store.del(&names::fire_queue_key(&id)).await;
             info!(activity_id = %id, "activity deleted");
+            state
+                .event_log
+                .push(
+                    "activity_deleted",
+                    format!("Activity {} deleted", &id[..id.len().min(8)]),
+                    Some(serde_json::json!({"activity_id": id})),
+                )
+                .await;
             StatusCode::NO_CONTENT
         }
         None => StatusCode::NOT_FOUND,

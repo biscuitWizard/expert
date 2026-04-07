@@ -48,3 +48,5 @@ chrono = { version = "0.4", features = ["serde"] }
 tokio-tungstenite = { version = "0.26", features = ["native-tls"] }
 futures-util = "0.3"
 url = "2"
+qdrant-client = "1"
+tokio-stream = { version = "0.1", features = ["sync"] }

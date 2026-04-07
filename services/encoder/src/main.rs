@@ -12,17 +12,22 @@ use expert_redis::{StreamConsumer, StreamProducer};
 use expert_types::event::Event;
 use expert_types::signals::{EncodeRequest, EncodeResult};
 
-// ---------- Ollama embedding client ----------
+// ---------- Ollama embedding client (OpenAI-compatible endpoint) ----------
 
 #[derive(Serialize)]
-struct OllamaEmbedRequest {
+struct EmbeddingsRequest {
     model: String,
     input: Vec<String>,
 }
 
 #[derive(Deserialize)]
-struct OllamaEmbedResponse {
-    embeddings: Vec<Vec<f32>>,
+struct EmbeddingsResponse {
+    data: Vec<EmbeddingData>,
+}
+
+#[derive(Deserialize)]
+struct EmbeddingData {
+    embedding: Vec<f32>,
 }
 
 struct OllamaEmbedder {
@@ -35,13 +40,13 @@ impl OllamaEmbedder {
     fn new(base_url: &str, model: &str) -> Self {
         Self {
             client: reqwest::Client::new(),
-            url: format!("{}/api/embed", base_url.trim_end_matches('/')),
+            url: format!("{}/v1/embeddings", base_url.trim_end_matches('/')),
             model: model.to_string(),
         }
     }
 
     async fn embed(&self, texts: &[String]) -> Result<Vec<Vec<f32>>> {
-        let req = OllamaEmbedRequest {
+        let req = EmbeddingsRequest {
             model: self.model.clone(),
             input: texts.to_vec(),
         };
@@ -53,8 +58,8 @@ impl OllamaEmbedder {
             .await?
             .error_for_status()?;
 
-        let result: OllamaEmbedResponse = resp.json().await?;
-        Ok(result.embeddings)
+        let result: EmbeddingsResponse = resp.json().await?;
+        Ok(result.data.into_iter().map(|d| d.embedding).collect())
     }
 }
 

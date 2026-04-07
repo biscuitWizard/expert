@@ -54,6 +54,10 @@ pub struct Config {
     pub medium_label_threshold: u64,
     pub medium_batch_size: usize,
     pub medium_learning_rate: f32,
+
+    // Debug panel
+    pub panel_user: Option<String>,
+    pub panel_pass: Option<String>,
 }
 
 impl Config {
@@ -110,6 +114,9 @@ impl Config {
             medium_label_threshold: env_parse("MEDIUM_LABEL_THRESHOLD", 20),
             medium_batch_size: env_parse("MEDIUM_BATCH_SIZE", 10),
             medium_learning_rate: env_parse("MEDIUM_LEARNING_RATE", 0.01),
+
+            panel_user: env::var("PANEL_USER").ok(),
+            panel_pass: env::var("PANEL_PASS").ok(),
         }
     }
 }

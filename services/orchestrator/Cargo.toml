@@ -15,3 +15,7 @@ serde_json = { workspace = true }
 uuid = { workspace = true }
 axum = { workspace = true }
 anyhow = { workspace = true }
+tower-http = { workspace = true }
+qdrant-client = { workspace = true }
+tokio-stream = { workspace = true }
+futures-util = { workspace = true }

@@ -1,0 +1,741 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!--SESSION_TOKEN-->
+<title>Expert Debug Panel</title>
+<style>
+  :root {
+    --bg: #0e1117;
+    --surface: #161b22;
+    --border: #30363d;
+    --text: #e6edf3;
+    --text-dim: #8b949e;
+    --accent: #58a6ff;
+    --green: #3fb950;
+    --yellow: #d29922;
+    --red: #f85149;
+    --orange: #db6d28;
+    --purple: #bc8cff;
+    --mono: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', 'SF Mono', monospace;
+    --sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: var(--bg); color: var(--text); font-family: var(--sans); font-size: 13px; height: 100vh; overflow: hidden; }
+
+  .layout {
+    display: grid;
+    grid-template-columns: 1fr 1.5fr;
+    grid-template-rows: 48px auto 1fr 1fr;
+    height: 100vh;
+    gap: 1px;
+    background: var(--border);
+  }
+
+  header {
+    grid-column: 1 / -1;
+    background: var(--surface);
+    display: flex;
+    align-items: center;
+    padding: 0 16px;
+    gap: 16px;
+  }
+  header h1 { font-size: 15px; font-weight: 600; letter-spacing: -0.01em; }
+  header .status { font-size: 11px; color: var(--text-dim); display: flex; align-items: center; gap: 6px; }
+  header .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--red); }
+  header .dot.connected { background: var(--green); }
+
+  .pane {
+    background: var(--surface);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    min-height: 0;
+  }
+  .pane-header {
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--border);
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-dim);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-shrink: 0;
+  }
+  .pane-body {
+    flex: 1;
+    overflow-y: auto;
+    min-height: 0;
+  }
+  .pane-body::-webkit-scrollbar { width: 6px; }
+  .pane-body::-webkit-scrollbar-track { background: transparent; }
+  .pane-body::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+  /* Status Strip */
+  .status-strip {
+    grid-column: 1 / -1;
+    background: var(--surface);
+    display: flex;
+    align-items: center;
+    padding: 0 12px;
+    gap: 4px;
+    font-family: var(--mono);
+    font-size: 10px;
+    min-height: 28px;
+    overflow-x: auto;
+    flex-wrap: nowrap;
+  }
+  .status-strip::-webkit-scrollbar { height: 0; }
+  .svc-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 7px;
+    border-radius: 3px;
+    background: var(--bg);
+    white-space: nowrap;
+    flex-shrink: 0;
+  }
+  .svc-dot {
+    width: 6px; height: 6px; border-radius: 50%;
+    flex-shrink: 0;
+  }
+  .svc-dot.up { background: var(--green); }
+  .svc-dot.down { background: var(--red); }
+  .svc-dot.unknown { background: var(--text-dim); }
+  .svc-name { color: var(--text-dim); }
+  .svc-latency { color: var(--text-dim); opacity: 0.7; }
+  .sep {
+    width: 1px; height: 14px; background: var(--border); margin: 0 6px; flex-shrink: 0;
+  }
+  .metric {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 6px;
+    white-space: nowrap;
+    flex-shrink: 0;
+    color: var(--text-dim);
+  }
+  .metric .label { opacity: 0.6; text-transform: uppercase; font-size: 9px; }
+  .metric .val { color: var(--text); font-weight: 600; }
+  .metric .bar-bg {
+    width: 40px; height: 4px; background: var(--bg); border-radius: 2px; overflow: hidden;
+  }
+  .metric .bar-fill {
+    height: 100%; border-radius: 2px; transition: width 0.5s ease;
+  }
+  .bar-ok { background: var(--green); }
+  .bar-warn { background: var(--yellow); }
+  .bar-crit { background: var(--red); }
+
+  /* Event Log Pane */
+  .log-pane { grid-row: 3 / 5; }
+  .log-entry {
+    padding: 6px 12px;
+    border-bottom: 1px solid var(--border);
+    font-family: var(--mono);
+    font-size: 11px;
+    line-height: 1.5;
+    cursor: pointer;
+  }
+  .log-entry:hover { background: rgba(88,166,255,0.06); }
+  .log-entry .ts { color: var(--text-dim); margin-right: 8px; }
+  .log-entry .badge {
+    display: inline-block;
+    padding: 1px 6px;
+    border-radius: 3px;
+    font-size: 10px;
+    font-weight: 600;
+    margin-right: 6px;
+    text-transform: uppercase;
+  }
+  .badge-activity_created { background: rgba(63,185,80,0.2); color: var(--green); }
+  .badge-activity_deleted { background: rgba(248,81,73,0.2); color: var(--red); }
+  .badge-fire_received { background: rgba(211,153,34,0.2); color: var(--yellow); }
+  .badge-context_dispatched { background: rgba(88,166,255,0.2); color: var(--accent); }
+  .badge-goal_updated { background: rgba(188,140,255,0.2); color: var(--purple); }
+  .badge-goal_added { background: rgba(188,140,255,0.2); color: var(--purple); }
+  .badge-checkpoint_reload { background: rgba(219,109,40,0.2); color: var(--orange); }
+  .badge-stale_fire_dropped { background: rgba(248,81,73,0.15); color: var(--red); }
+  .badge-threshold_update { background: rgba(88,166,255,0.15); color: var(--accent); }
+  .badge-panel_started { background: rgba(63,185,80,0.15); color: var(--green); }
+  .log-detail {
+    display: none;
+    margin-top: 4px;
+    padding: 6px 8px;
+    background: var(--bg);
+    border-radius: 4px;
+    white-space: pre-wrap;
+    word-break: break-all;
+    color: var(--text-dim);
+    font-size: 10px;
+  }
+  .log-entry.expanded .log-detail { display: block; }
+
+  .log-controls {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+  }
+  .log-controls button {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    color: var(--text-dim);
+    padding: 2px 8px;
+    border-radius: 3px;
+    font-size: 10px;
+    cursor: pointer;
+  }
+  .log-controls button:hover { color: var(--text); border-color: var(--text-dim); }
+  .log-controls button.active { color: var(--accent); border-color: var(--accent); }
+
+  /* Activities Pane */
+  .activity-card {
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--border);
+    cursor: pointer;
+  }
+  .activity-card:hover { background: rgba(88,166,255,0.04); }
+  .activity-card .row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px; }
+  .activity-card .aid { font-family: var(--mono); font-size: 12px; font-weight: 600; }
+  .activity-card .stream { font-family: var(--mono); font-size: 11px; color: var(--text-dim); }
+  .activity-card .meta { display: flex; gap: 12px; font-size: 11px; color: var(--text-dim); }
+  .activity-card .meta span { display: flex; align-items: center; gap: 3px; }
+  .state-badge {
+    display: inline-block;
+    padding: 1px 6px;
+    border-radius: 3px;
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+  }
+  .state-Active { background: rgba(63,185,80,0.2); color: var(--green); }
+  .state-ColdStart { background: rgba(211,153,34,0.2); color: var(--yellow); }
+  .state-Fired { background: rgba(248,81,73,0.2); color: var(--red); }
+  .state-Suspended { background: rgba(139,148,158,0.2); color: var(--text-dim); }
+  .state-Refractory { background: rgba(219,109,40,0.2); color: var(--orange); }
+  .state-Terminated { background: rgba(139,148,158,0.3); color: var(--text-dim); }
+
+  .activity-detail {
+    display: none;
+    margin-top: 8px;
+    padding: 8px;
+    background: var(--bg);
+    border-radius: 4px;
+  }
+  .activity-card.expanded .activity-detail { display: block; }
+
+  .goal-row {
+    padding: 4px 0;
+    border-bottom: 1px solid var(--border);
+    font-size: 11px;
+  }
+  .goal-row:last-child { border-bottom: none; }
+  .goal-name { font-weight: 600; color: var(--purple); font-family: var(--mono); }
+  .goal-desc { color: var(--text-dim); margin-top: 2px; }
+  .goal-meta { color: var(--text-dim); font-size: 10px; margin-top: 2px; font-family: var(--mono); }
+  .theta-row { margin-top: 6px; font-family: var(--mono); font-size: 11px; color: var(--text-dim); }
+
+  /* Graph Explorer Pane */
+  .graph-controls {
+    padding: 8px 12px;
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+  }
+  .graph-controls select, .graph-controls input {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 4px 8px;
+    border-radius: 3px;
+    font-size: 11px;
+    font-family: var(--mono);
+  }
+  .graph-controls select { min-width: 140px; }
+  .graph-controls input { flex: 1; }
+  .graph-controls button {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    color: var(--text-dim);
+    padding: 4px 10px;
+    border-radius: 3px;
+    font-size: 11px;
+    cursor: pointer;
+  }
+  .graph-controls button:hover { color: var(--text); border-color: var(--text-dim); }
+
+  .collection-stats {
+    padding: 6px 12px;
+    font-size: 11px;
+    color: var(--text-dim);
+    font-family: var(--mono);
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+  }
+
+  .point-card {
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--border);
+    font-family: var(--mono);
+    font-size: 11px;
+  }
+  .point-id { font-weight: 600; color: var(--accent); margin-bottom: 4px; }
+  .point-payload { color: var(--text-dim); }
+  .point-payload .field { margin: 2px 0; }
+  .point-payload .field-key { color: var(--yellow); }
+  .point-payload .field-val { color: var(--text); }
+
+  .load-more {
+    padding: 10px;
+    text-align: center;
+  }
+  .load-more button {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    color: var(--accent);
+    padding: 6px 16px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 11px;
+  }
+  .load-more button:hover { border-color: var(--accent); }
+
+  .empty-state {
+    padding: 24px;
+    text-align: center;
+    color: var(--text-dim);
+    font-size: 12px;
+  }
+</style>
+</head>
+<body>
+<div class="layout">
+  <header>
+    <h1>Expert Debug Panel</h1>
+    <div class="status">
+      <span class="dot" id="sseDot"></span>
+      <span id="sseStatus">Connecting...</span>
+    </div>
+    <div style="flex:1"></div>
+    <div class="status">
+      <span id="activityCount">0 activities</span>
+    </div>
+  </header>
+
+  <!-- Status Strip -->
+  <div class="status-strip" id="statusStrip">
+    <span class="svc-chip"><span class="svc-dot unknown"></span><span class="svc-name">Redis</span></span>
+    <span class="svc-chip"><span class="svc-dot unknown"></span><span class="svc-name">Qdrant</span></span>
+    <span class="svc-chip"><span class="svc-dot unknown"></span><span class="svc-name">Postgres</span></span>
+    <span class="svc-chip"><span class="svc-dot unknown"></span><span class="svc-name">Ollama</span></span>
+    <span class="sep"></span>
+    <span class="metric" id="metricCpu"><span class="label">CPU</span><span class="val">--</span></span>
+    <span class="metric" id="metricMem"><span class="label">MEM</span><span class="val">--</span><span class="bar-bg"><span class="bar-fill bar-ok" style="width:0%"></span></span></span>
+    <span class="metric" id="metricSwap"><span class="label">SWP</span><span class="val">--</span></span>
+    <span class="sep"></span>
+    <span class="metric" id="metricNetRx"><span class="label">RX</span><span class="val">--</span></span>
+    <span class="metric" id="metricNetTx"><span class="label">TX</span><span class="val">--</span></span>
+    <span class="sep"></span>
+    <span class="metric" id="metricUptime"><span class="label">UP</span><span class="val">--</span></span>
+  </div>
+
+  <!-- Event Log Pane -->
+  <div class="pane log-pane">
+    <div class="pane-header">
+      <span>Event Log</span>
+      <div class="log-controls">
+        <button id="pauseBtn" onclick="togglePause()">Pause</button>
+        <button id="clearBtn" onclick="clearLog()">Clear</button>
+      </div>
+    </div>
+    <div class="pane-body" id="logBody"></div>
+  </div>
+
+  <!-- Activities Pane -->
+  <div class="pane">
+    <div class="pane-header">
+      <span>Activities</span>
+      <span id="actRefresh" style="font-weight:400;text-transform:none;letter-spacing:0">auto-refresh 2s</span>
+    </div>
+    <div class="pane-body" id="activitiesBody">
+      <div class="empty-state">No activities registered</div>
+    </div>
+  </div>
+
+  <!-- Graph Explorer Pane -->
+  <div class="pane">
+    <div class="pane-header">
+      <span>Graph Explorer (Qdrant)</span>
+    </div>
+    <div class="graph-controls">
+      <select id="collectionSelect" onchange="selectCollection()">
+        <option value="">-- select collection --</option>
+      </select>
+      <button onclick="loadCollections()">Refresh</button>
+    </div>
+    <div class="collection-stats" id="collectionStats" style="display:none"></div>
+    <div class="pane-body" id="graphBody">
+      <div class="empty-state">Select a collection to browse points</div>
+    </div>
+  </div>
+</div>
+
+<script>
+const logBody = document.getElementById('logBody');
+const activitiesBody = document.getElementById('activitiesBody');
+const graphBody = document.getElementById('graphBody');
+const sseDot = document.getElementById('sseDot');
+const sseStatus = document.getElementById('sseStatus');
+
+const PANEL_TOKEN = document.querySelector('meta[name="panel-token"]')?.content || '';
+
+function authFetch(url, opts = {}) {
+  const h = new Headers(opts.headers || {});
+  h.set('X-Panel-Token', PANEL_TOKEN);
+  return fetch(url, { ...opts, headers: h });
+}
+
+let paused = false;
+let expandedActivities = new Set();
+let nextOffset = null;
+let currentCollection = '';
+
+// SSE connection (uses token as query param since EventSource can't set headers)
+let evtSource = null;
+function connectSSE() {
+  evtSource = new EventSource('/panel/sse?token=' + encodeURIComponent(PANEL_TOKEN));
+  evtSource.onopen = () => {
+    sseDot.classList.add('connected');
+    sseStatus.textContent = 'Connected';
+  };
+  evtSource.onmessage = (e) => {
+    if (paused) return;
+    try {
+      const evt = JSON.parse(e.data);
+      appendLogEntry(evt);
+    } catch {}
+  };
+  evtSource.onerror = () => {
+    sseDot.classList.remove('connected');
+    sseStatus.textContent = 'Disconnected — retrying...';
+  };
+}
+connectSSE();
+
+function appendLogEntry(evt) {
+  const div = document.createElement('div');
+  div.className = 'log-entry';
+  div.onclick = () => div.classList.toggle('expanded');
+
+  const ts = new Date(evt.timestamp_ms).toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  const badgeClass = 'badge-' + evt.kind;
+
+  let html = `<span class="ts">${ts}</span>`;
+  html += `<span class="badge ${badgeClass}">${evt.kind.replace(/_/g, ' ')}</span>`;
+  html += `<span>${escHtml(evt.summary)}</span>`;
+  if (evt.detail) {
+    html += `<div class="log-detail">${escHtml(JSON.stringify(evt.detail, null, 2))}</div>`;
+  }
+  div.innerHTML = html;
+  logBody.appendChild(div);
+
+  // Keep max 500 entries in DOM
+  while (logBody.children.length > 500) logBody.removeChild(logBody.firstChild);
+  logBody.scrollTop = logBody.scrollHeight;
+}
+
+function togglePause() {
+  paused = !paused;
+  const btn = document.getElementById('pauseBtn');
+  btn.textContent = paused ? 'Resume' : 'Pause';
+  btn.classList.toggle('active', paused);
+}
+
+function clearLog() {
+  logBody.innerHTML = '';
+}
+
+// Activities polling
+async function refreshActivities() {
+  try {
+    const resp = await authFetch('/panel/api/activities');
+    if (!resp.ok) return;
+    const data = await resp.json();
+    document.getElementById('activityCount').textContent = data.length + ' activit' + (data.length === 1 ? 'y' : 'ies');
+    renderActivities(data);
+  } catch {}
+}
+
+function renderActivities(activities) {
+  if (activities.length === 0) {
+    activitiesBody.innerHTML = '<div class="empty-state">No activities registered</div>';
+    return;
+  }
+  let html = '';
+  for (const a of activities) {
+    const expanded = expandedActivities.has(a.activity_id);
+    html += `<div class="activity-card${expanded ? ' expanded' : ''}" onclick="toggleActivity('${a.activity_id}', this)">`;
+    html += `<div class="row"><span class="aid">${escHtml(a.activity_id.substring(0,8))}...</span>`;
+    html += `<span class="state-badge state-${a.lifecycle_state}">${a.lifecycle_state}</span></div>`;
+    html += `<div class="row"><span class="stream">${escHtml(a.stream_id)}</span>`;
+    html += `<span style="font-size:10px;color:var(--text-dim)">${escHtml(a.domain)}</span></div>`;
+    html += `<div class="meta">`;
+    html += `<span>Goals: ${a.goals.length}</span>`;
+    html += `<span>Events: ${a.event_count}</span>`;
+    html += `<span>Invocations: ${a.invocation_count}</span>`;
+    html += `<span>S: ${a.suppress_count} R: ${a.recall_count}</span>`;
+    html += `</div>`;
+
+    html += `<div class="activity-detail">`;
+    html += `<div class="theta-row">Thresholds: [${(a.theta||[]).map(t=>t.toFixed(3)).join(', ')}]</div>`;
+    html += `<div style="margin-top:4px;font-size:10px;color:var(--text-dim);font-family:var(--mono)">Worker: ${a.worker_id} | Pending fire: ${a.has_pending_fire}</div>`;
+    html += `<div style="margin-top:4px;font-size:10px;color:var(--text-dim);font-family:var(--mono)">Created: ${new Date(a.created_at).toLocaleString()} | Last active: ${new Date(a.last_active).toLocaleString()}</div>`;
+    if (a.goals && a.goals.length > 0) {
+      html += `<div style="margin-top:8px;font-size:11px;font-weight:600;color:var(--text-dim)">Goals</div>`;
+      for (const g of a.goals) {
+        html += `<div class="goal-row">`;
+        html += `<div class="goal-name">${escHtml(g.name)}</div>`;
+        html += `<div class="goal-desc">${escHtml(g.description)}</div>`;
+        html += `<div class="goal-meta">id: ${g.id.substring(0,8)}... | v${g.version} | ${g.active ? 'active' : 'inactive'}</div>`;
+        html += `</div>`;
+      }
+    }
+    html += `</div></div>`;
+  }
+  activitiesBody.innerHTML = html;
+}
+
+function toggleActivity(id, el) {
+  if (expandedActivities.has(id)) {
+    expandedActivities.delete(id);
+    el.classList.remove('expanded');
+  } else {
+    expandedActivities.add(id);
+    el.classList.add('expanded');
+  }
+}
+
+setInterval(refreshActivities, 2000);
+refreshActivities();
+
+// Graph Explorer
+async function loadCollections() {
+  const select = document.getElementById('collectionSelect');
+  try {
+    const resp = await authFetch('/panel/api/qdrant/collections');
+    if (!resp.ok) {
+      graphBody.innerHTML = '<div class="empty-state">Failed to connect to Qdrant</div>';
+      return;
+    }
+    const data = await resp.json();
+    select.innerHTML = '<option value="">-- select collection --</option>';
+    for (const name of (data.collections || [])) {
+      const opt = document.createElement('option');
+      opt.value = name;
+      opt.textContent = name;
+      if (name === currentCollection) opt.selected = true;
+      select.appendChild(opt);
+    }
+  } catch {
+    graphBody.innerHTML = '<div class="empty-state">Qdrant unavailable</div>';
+  }
+}
+
+async function selectCollection() {
+  const name = document.getElementById('collectionSelect').value;
+  currentCollection = name;
+  nextOffset = null;
+  if (!name) {
+    document.getElementById('collectionStats').style.display = 'none';
+    graphBody.innerHTML = '<div class="empty-state">Select a collection to browse points</div>';
+    return;
+  }
+
+  // Load collection info
+  try {
+    const resp = await authFetch(`/panel/api/qdrant/collections/${encodeURIComponent(name)}`);
+    if (resp.ok) {
+      const info = await resp.json();
+      const statsEl = document.getElementById('collectionStats');
+      statsEl.style.display = 'block';
+      statsEl.textContent = `Points: ${info.points_count ?? '?'} | Vectors: ${info.vectors_count ?? '?'} | Segments: ${info.segments_count ?? '?'}`;
+    }
+  } catch {}
+
+  graphBody.innerHTML = '';
+  await loadPoints(name, null);
+}
+
+async function loadPoints(name, offset) {
+  let url = `/panel/api/qdrant/collections/${encodeURIComponent(name)}/scroll?limit=20`;
+  if (offset) url += `&offset=${encodeURIComponent(offset)}`;
+
+  try {
+    const resp = await authFetch(url);
+    if (!resp.ok) {
+      graphBody.innerHTML += '<div class="empty-state">Error loading points</div>';
+      return;
+    }
+    const data = await resp.json();
+    nextOffset = data.next_offset;
+
+    // Remove old load-more button
+    const oldBtn = graphBody.querySelector('.load-more');
+    if (oldBtn) oldBtn.remove();
+
+    if (data.points.length === 0 && !offset) {
+      graphBody.innerHTML = '<div class="empty-state">Collection is empty</div>';
+      return;
+    }
+
+    for (const p of data.points) {
+      const div = document.createElement('div');
+      div.className = 'point-card';
+      let html = `<div class="point-id">${escHtml(p.id || 'unknown')}</div>`;
+      html += '<div class="point-payload">';
+      if (p.payload) {
+        for (const [k, v] of Object.entries(p.payload)) {
+          let val = typeof v === 'object' ? JSON.stringify(v) : String(v);
+          if (val.length > 200) val = val.substring(0, 200) + '...';
+          html += `<div class="field"><span class="field-key">${escHtml(k)}</span>: <span class="field-val">${escHtml(val)}</span></div>`;
+        }
+      }
+      html += '</div>';
+      div.innerHTML = html;
+      graphBody.appendChild(div);
+    }
+
+    if (nextOffset) {
+      const loadMore = document.createElement('div');
+      loadMore.className = 'load-more';
+      loadMore.innerHTML = '<button onclick="loadMorePoints()">Load more...</button>';
+      graphBody.appendChild(loadMore);
+    }
+  } catch {
+    graphBody.innerHTML += '<div class="empty-state">Error loading points</div>';
+  }
+}
+
+function loadMorePoints() {
+  if (currentCollection && nextOffset) {
+    loadPoints(currentCollection, nextOffset);
+  }
+}
+
+loadCollections();
+
+// Status strip polling
+let prevNetRx = null, prevNetTx = null, prevNetTime = null;
+
+async function refreshStatus() {
+  try {
+    const resp = await authFetch('/panel/api/status');
+    if (!resp.ok) return;
+    const data = await resp.json();
+    renderServiceStatus(data.services);
+    renderSystemMetrics(data.system);
+  } catch {}
+}
+
+function renderServiceStatus(svcs) {
+  const strip = document.getElementById('statusStrip');
+  const chips = strip.querySelectorAll('.svc-chip');
+  const order = ['redis', 'qdrant', 'postgres', 'ollama'];
+  order.forEach((name, i) => {
+    if (!chips[i] || !svcs[name]) return;
+    const s = svcs[name];
+    const dot = chips[i].querySelector('.svc-dot');
+    dot.className = 'svc-dot ' + (s.status === 'up' ? 'up' : s.status === 'down' ? 'down' : 'unknown');
+    // Show latency inline
+    let latEl = chips[i].querySelector('.svc-latency');
+    if (s.latency_ms !== undefined && s.status === 'up') {
+      if (!latEl) { latEl = document.createElement('span'); latEl.className = 'svc-latency'; chips[i].appendChild(latEl); }
+      latEl.textContent = s.latency_ms + 'ms';
+    } else if (latEl) {
+      latEl.remove();
+    }
+    chips[i].title = s.error || '';
+  });
+}
+
+function renderSystemMetrics(sys) {
+  if (!sys) return;
+  const cores = sys.cpu_cores || 1;
+  const load = sys.load_1m;
+  if (load !== undefined) {
+    const pct = Math.min(100, (load / cores * 100)).toFixed(0);
+    document.querySelector('#metricCpu .val').textContent = load.toFixed(2) + ' (' + pct + '%)';
+  }
+
+  if (sys.mem_total_mb) {
+    const usedGb = (sys.mem_used_mb / 1024).toFixed(1);
+    const totalGb = (sys.mem_total_mb / 1024).toFixed(1);
+    const pct = (sys.mem_used_mb / sys.mem_total_mb * 100);
+    const el = document.getElementById('metricMem');
+    el.querySelector('.val').textContent = usedGb + '/' + totalGb + 'G';
+    const bar = el.querySelector('.bar-fill');
+    bar.style.width = pct.toFixed(0) + '%';
+    bar.className = 'bar-fill ' + (pct > 90 ? 'bar-crit' : pct > 70 ? 'bar-warn' : 'bar-ok');
+  }
+
+  if (sys.swap_total_mb !== undefined && sys.swap_total_mb > 0) {
+    document.querySelector('#metricSwap .val').textContent = (sys.swap_used_mb/1024).toFixed(1) + '/' + (sys.swap_total_mb/1024).toFixed(1) + 'G';
+  } else {
+    document.querySelector('#metricSwap .val').textContent = 'n/a';
+  }
+
+  const now = Date.now();
+  if (sys.net_rx_bytes !== undefined) {
+    if (prevNetRx !== null && prevNetTime !== null) {
+      const dt = (now - prevNetTime) / 1000;
+      if (dt > 0) {
+        const rxRate = (sys.net_rx_bytes - prevNetRx) / dt;
+        const txRate = (sys.net_tx_bytes - prevNetTx) / dt;
+        document.querySelector('#metricNetRx .val').textContent = fmtBytes(rxRate) + '/s';
+        document.querySelector('#metricNetTx .val').textContent = fmtBytes(txRate) + '/s';
+      }
+    }
+    prevNetRx = sys.net_rx_bytes;
+    prevNetTx = sys.net_tx_bytes;
+    prevNetTime = now;
+  }
+
+  if (sys.uptime_secs !== undefined) {
+    document.querySelector('#metricUptime .val').textContent = fmtDuration(sys.uptime_secs);
+  }
+}
+
+function fmtBytes(b) {
+  if (b < 1024) return b.toFixed(0) + 'B';
+  if (b < 1024*1024) return (b/1024).toFixed(1) + 'K';
+  if (b < 1024*1024*1024) return (b/1024/1024).toFixed(1) + 'M';
+  return (b/1024/1024/1024).toFixed(2) + 'G';
+}
+
+function fmtDuration(s) {
+  const d = Math.floor(s / 86400);
+  const h = Math.floor((s % 86400) / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  if (d > 0) return d + 'd' + h + 'h';
+  if (h > 0) return h + 'h' + m + 'm';
+  return m + 'm';
+}
+
+setInterval(refreshStatus, 5000);
+refreshStatus();
+
+function escHtml(s) {
+  if (!s) return '';
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+</script>
+</body>
+</html>
