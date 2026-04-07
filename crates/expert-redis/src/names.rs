@@ -39,6 +39,7 @@ pub const REQUESTS_TRAINING_BATCH: &str = "requests.training_batch";
 pub const RESULTS_TRAINING_BATCH: &str = "results.training_batch";
 pub const REQUESTS_FEWSHOT: &str = "requests.fewshot";
 pub const RESULTS_FEWSHOT: &str = "results.fewshot";
+pub const REQUESTS_FILTER_UPDATE: &str = "requests.filter_update";
 
 /// Redis key patterns for state store.
 pub fn state_key(activity_id: &str) -> String {
@@ -139,6 +140,7 @@ mod tests {
         assert!(!RESULTS_TRAINING_BATCH.is_empty());
         assert!(!REQUESTS_FEWSHOT.is_empty());
         assert!(!RESULTS_FEWSHOT.is_empty());
+        assert!(!REQUESTS_FILTER_UPDATE.is_empty());
     }
 
     #[test]
@@ -163,6 +165,7 @@ mod tests {
             RESULTS_TRAINING_BATCH,
             REQUESTS_FEWSHOT,
             RESULTS_FEWSHOT,
+            REQUESTS_FILTER_UPDATE,
         ] {
             assert!(name.contains('.'), "{name} should use dotted namespace");
         }

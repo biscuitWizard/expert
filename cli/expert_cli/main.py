@@ -22,16 +22,28 @@ def create_activity(
     stream_id: str = typer.Option(..., "--stream-id", "-s", help="Stream ID to monitor"),
     goal: list[str] = typer.Option(..., "--goal", "-g", help="Goal description (repeatable)"),
     domain: Optional[str] = typer.Option(None, "--domain", "-d", help="Domain name"),
+    filter: Optional[str] = typer.Option(
+        None,
+        "--filter",
+        "-f",
+        help="Event filter as JSON string or @filepath",
+    ),
 ):
     """Create a new activity with goals."""
     goals = [{"name": g.split(":")[0].strip() if ":" in g else g[:30], "description": g} for g in goal]
 
-    body = {
+    body: dict = {
         "stream_id": stream_id,
         "goals": goals,
     }
     if domain:
         body["domain"] = domain
+
+    if filter is not None:
+        event_filter = _parse_filter(filter)
+        if event_filter is None:
+            return
+        body["event_filter"] = event_filter
 
     with _client() as client:
         resp = client.post("/activities", json=body)
@@ -44,6 +56,25 @@ def create_activity(
         console.print(f"  Goals:  {data['goal_count']}")
     else:
         console.print(f"[red]Error {resp.status_code}:[/red] {resp.text}")
+
+
+def _parse_filter(raw: str) -> Optional[dict]:
+    """Parse a filter from a JSON string or @filepath."""
+    text = raw
+    if raw.startswith("@"):
+        path = raw[1:]
+        try:
+            with open(path) as fh:
+                text = fh.read()
+        except FileNotFoundError:
+            console.print(f"[red]Filter file not found:[/red] {path}")
+            return None
+
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError as exc:
+        console.print(f"[red]Invalid filter JSON:[/red] {exc}")
+        return None
 
 
 @app.command("list")
@@ -107,6 +138,12 @@ def status(activity_id: str = typer.Argument(..., help="Activity ID")):
     console.print(f"  Suppresses:  {data['suppress_count']}")
     console.print(f"  Recalls:     {data['recall_count']}")
     console.print(f"  Thresholds:  {data['theta']}")
+
+    event_filter = data.get("event_filter")
+    if event_filter and event_filter != "All":
+        console.print(f"  Filter:      {json.dumps(event_filter, indent=None)}")
+    else:
+        console.print("  Filter:      [dim]* (all events)[/dim]")
 
     console.print("\n[bold]Goals:[/bold]")
     for g in data.get("goals", []):

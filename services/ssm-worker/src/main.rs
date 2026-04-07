@@ -12,6 +12,7 @@ use expert_config::Config;
 use expert_redis::names;
 use expert_redis::{StreamConsumer, StreamProducer};
 use expert_types::event::Event;
+use expert_types::event_filter::EventFilter;
 use expert_types::goal::Goal;
 
 use activity::ActivityInstance;
@@ -173,11 +174,11 @@ async fn process_event(state: &Arc<RwLock<WorkerState>>, event: Event, _entry_id
     let mut ws = state.write().await;
     let now = now_ms();
 
-    // Fan out to all activities on this stream
+    // Fan out to all activities on this stream whose filter matches
     let activity_ids: Vec<String> = ws
         .activities
         .iter()
-        .filter(|(_, a)| a.stream_id == event.stream_id)
+        .filter(|(_, a)| a.stream_id == event.stream_id && a.event_filter.matches(&event.metadata))
         .map(|(id, _)| id.clone())
         .collect();
 
@@ -249,6 +250,10 @@ async fn handle_command(state: &Arc<RwLock<WorkerState>>, cmd: serde_json::Value
                 .get("goals")
                 .and_then(|v| serde_json::from_value(v.clone()).ok())
                 .unwrap_or_default();
+            let event_filter: EventFilter = cmd
+                .get("event_filter")
+                .and_then(|v| serde_json::from_value(v.clone()).ok())
+                .unwrap_or_default();
 
             if activity_id.is_empty() || stream_id.is_empty() {
                 warn!("invalid assign command: missing activity_id or stream_id");
@@ -263,6 +268,7 @@ async fn handle_command(state: &Arc<RwLock<WorkerState>>, cmd: serde_json::Value
             let instance = ActivityInstance::new(
                 activity_id.to_string(),
                 stream_id.to_string(),
+                event_filter,
                 goals,
                 &config,
             );
@@ -352,6 +358,22 @@ async fn handle_command(state: &Arc<RwLock<WorkerState>>, cmd: serde_json::Value
                     activity_id,
                     suppress_rate, recall_rate, "thresholds updated"
                 );
+            }
+        }
+        "filter_update" => {
+            let activity_id = cmd
+                .get("activity_id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let event_filter: EventFilter = cmd
+                .get("event_filter")
+                .and_then(|v| serde_json::from_value(v.clone()).ok())
+                .unwrap_or_default();
+
+            let mut ws = state.write().await;
+            if let Some(activity) = ws.activities.get_mut(activity_id) {
+                activity.event_filter = event_filter;
+                info!(activity_id, "event filter updated");
             }
         }
         other => {

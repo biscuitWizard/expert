@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
 
+use crate::event_filter::EventFilter;
+
 /// Activity lifecycle states. The FSM enforces sequential invocation:
 /// an activity processes one LLM invocation at a time.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -75,4 +77,8 @@ pub struct ActivityState {
     pub last_active: u64,
     /// Pointer to compressed session history in RAG graph.
     pub session_history_id: Option<String>,
+    /// Event filter restricting which events on the stream are delivered
+    /// to this activity. Defaults to `All` (no filtering).
+    #[serde(default)]
+    pub event_filter: EventFilter,
 }

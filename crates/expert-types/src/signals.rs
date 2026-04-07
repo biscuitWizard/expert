@@ -98,6 +98,14 @@ pub enum ThresholdMagnitude {
     Strong,
 }
 
+/// Filter update request from llm-gateway to orchestrator, triggered when
+/// the LLM calls update_event_filter().
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FilterUpdateRequest {
+    pub activity_id: String,
+    pub event_filter: crate::event_filter::EventFilter,
+}
+
 /// Session history summarization request from rag-service to llm-gateway.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SummarizeRequest {

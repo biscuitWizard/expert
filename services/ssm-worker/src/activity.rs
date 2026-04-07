@@ -4,6 +4,7 @@ use tracing::debug;
 use expert_config::Config;
 use expert_types::activity::ActivityLifecycle;
 use expert_types::event::Event;
+use expert_types::event_filter::EventFilter;
 use expert_types::goal::Goal;
 use expert_types::signals::FireSignal;
 
@@ -15,6 +16,7 @@ const NUM_SCALAR_FEATURES: usize = 3; // drift, surprise, delta_t (silences are 
 pub struct ActivityInstance {
     pub activity_id: String,
     pub stream_id: String,
+    pub event_filter: EventFilter,
     pub goals: Vec<Goal>,
     pub ssm: LinearSsm,
     pub feature_state: FeatureState,
@@ -39,7 +41,13 @@ pub struct ActivityInstance {
 }
 
 impl ActivityInstance {
-    pub fn new(activity_id: String, stream_id: String, goals: Vec<Goal>, config: &Config) -> Self {
+    pub fn new(
+        activity_id: String,
+        stream_id: String,
+        event_filter: EventFilter,
+        goals: Vec<Goal>,
+        config: &Config,
+    ) -> Self {
         let k = goals.len();
         let embedding_dim = config.embedding_dim;
         let hidden_dim = config.ssm_hidden_dim;
@@ -58,6 +66,7 @@ impl ActivityInstance {
         Self {
             activity_id,
             stream_id,
+            event_filter,
             goals,
             ssm,
             feature_state,

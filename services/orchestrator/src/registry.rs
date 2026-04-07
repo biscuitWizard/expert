@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use expert_types::activity::{ActivityLifecycle, ActivityState};
+use expert_types::event_filter::EventFilter;
 use expert_types::goal::Goal;
 use expert_types::signals::{FireSignal, ToolDefinition};
 
@@ -14,6 +15,7 @@ pub struct ManagedActivity {
     pub state: ActivityState,
     pub goals: Vec<Goal>,
     pub tool_definitions: Vec<ToolDefinition>,
+    pub event_filter: EventFilter,
     pub worker_id: String,
     /// Pending fire signal (depth-1 queue per activity).
     pub pending_fire: Option<PendingFire>,
@@ -38,6 +40,7 @@ impl ActivityRegistry {
         domain: String,
         goals: Vec<Goal>,
         tool_definitions: Vec<ToolDefinition>,
+        event_filter: EventFilter,
         worker_id: String,
     ) -> &ManagedActivity {
         let now = now_ms();
@@ -71,12 +74,14 @@ impl ActivityRegistry {
             created_at: now,
             last_active: now,
             session_history_id: None,
+            event_filter: event_filter.clone(),
         };
 
         let managed = ManagedActivity {
             state,
             goals,
             tool_definitions,
+            event_filter,
             worker_id,
             pending_fire: None,
         };
@@ -137,6 +142,7 @@ mod tests {
             "test".into(),
             goals,
             Vec::new(),
+            EventFilter::All,
             "w-1".into(),
         );
         assert!(reg.get("act-1").is_some());
@@ -154,6 +160,7 @@ mod tests {
             "d".into(),
             vec![make_goal("x", 4)],
             Vec::new(),
+            EventFilter::All,
             "w".into(),
         );
         reg.create_activity(
@@ -162,6 +169,7 @@ mod tests {
             "d".into(),
             vec![make_goal("y", 4)],
             Vec::new(),
+            EventFilter::All,
             "w".into(),
         );
         assert_eq!(reg.list().len(), 2);
@@ -176,6 +184,7 @@ mod tests {
             "d".into(),
             vec![make_goal("a", 4)],
             Vec::new(),
+            EventFilter::All,
             "w".into(),
         );
         let removed = reg.remove("act-1");
@@ -200,6 +209,7 @@ mod tests {
             "d".into(),
             goals,
             Vec::new(),
+            EventFilter::All,
             "w".into(),
         );
         let managed = reg.get("act-1").unwrap();
@@ -217,6 +227,7 @@ mod tests {
             "d".into(),
             vec![make_goal("a", 4)],
             Vec::new(),
+            EventFilter::All,
             "w".into(),
         );
         let managed = reg.get("act-1").unwrap();

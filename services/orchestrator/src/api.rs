@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize};
 use tracing::{error, info};
 
 use expert_redis::names;
+use expert_types::event_filter::EventFilter;
 use expert_types::goal::{Goal, GoalAggregation};
 use expert_types::signals::{EncodeRequest, EncodeResult, ToolDefinition};
 
@@ -24,6 +25,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/activities", get(list_activities))
         .route("/activities/{id}", get(get_activity))
         .route("/activities/{id}", delete(delete_activity))
+        .route("/activities/{id}/filter", axum::routing::put(update_filter))
         .with_state(state)
 }
 
@@ -38,6 +40,8 @@ struct CreateActivityRequest {
     goals: Vec<GoalInput>,
     #[serde(default)]
     tool_definitions: Vec<ToolDefinition>,
+    #[serde(default)]
+    event_filter: EventFilter,
 }
 
 #[derive(Deserialize)]
@@ -64,6 +68,16 @@ async fn create_activity(
 ) -> impl IntoResponse {
     let activity_id = uuid::Uuid::new_v4().to_string();
     let domain = req.domain.unwrap_or_else(|| "default".to_string());
+
+    // Validate event filter
+    let filter_errors = req.event_filter.validate();
+    if !filter_errors.is_empty() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"error": "invalid event_filter", "details": filter_errors})),
+        )
+            .into_response();
+    }
 
     info!(activity_id, stream_id = %req.stream_id, goals = req.goals.len(), "creating activity");
 
@@ -136,6 +150,7 @@ async fn create_activity(
             domain,
             goals.clone(),
             all_tools,
+            req.event_filter.clone(),
             MVP_WORKER_ID.to_string(),
         );
 
@@ -172,6 +187,7 @@ async fn create_activity(
             "activity_id": activity_id,
             "stream_id": req.stream_id,
             "goals": goals,
+            "event_filter": req.event_filter,
         });
         let mut producer = state.producer.write().await;
         let _ = producer
@@ -230,6 +246,7 @@ async fn get_activity(
                     "description": g.description,
                     "version": g.version,
                 })).collect::<Vec<_>>(),
+                "event_filter": m.event_filter,
                 "event_count": m.state.event_count,
                 "invocation_count": m.state.invocation_count,
                 "suppress_count": m.state.suppress_count,
@@ -261,6 +278,50 @@ async fn delete_activity(
         }
         None => StatusCode::NOT_FOUND,
     }
+}
+
+async fn update_filter(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+    Json(new_filter): Json<EventFilter>,
+) -> impl IntoResponse {
+    let filter_errors = new_filter.validate();
+    if !filter_errors.is_empty() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"error": "invalid event_filter", "details": filter_errors})),
+        )
+            .into_response();
+    }
+
+    let mut registry = state.registry.write().await;
+    let activity = match registry.activities.get_mut(&id) {
+        Some(a) => a,
+        None => return StatusCode::NOT_FOUND.into_response(),
+    };
+
+    activity.event_filter = new_filter.clone();
+    activity.state.event_filter = new_filter.clone();
+    let worker_id = activity.worker_id.clone();
+    drop(registry);
+
+    // Notify SSM worker
+    let cmd = serde_json::json!({
+        "type": "filter_update",
+        "activity_id": id,
+        "event_filter": new_filter,
+    });
+    let mut producer = state.producer.write().await;
+    let _ = producer
+        .publish(&names::commands_worker(&worker_id), &cmd)
+        .await;
+
+    info!(activity_id = %id, "event filter updated");
+    (
+        StatusCode::OK,
+        Json(serde_json::json!({"status": "updated", "event_filter": new_filter})),
+    )
+        .into_response()
 }
 
 /// Poll results.encode stream for a specific request_id.
@@ -366,6 +427,21 @@ fn feedback_tool_definitions() -> Vec<ToolDefinition> {
                     "magnitude": {"type": "string", "enum": ["slight", "moderate", "strong"]}
                 },
                 "required": ["goal_id", "direction", "magnitude"]
+            }),
+            is_domain_tool: false,
+        },
+        ToolDefinition {
+            name: "update_event_filter".to_string(),
+            description: "Update the event filter for this activity to control which events from the stream are delivered. Use this to ignore irrelevant channels, senders, or event types. Pass null or omit to receive all events.".to_string(),
+            parameters_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "filter": {
+                        "description": "Event filter object. Use {\"field\": \"...\", \"op\": \"eq\"|\"ne\"|\"in\"|\"not_in\"|\"contains\"|\"matches\"|\"exists\"|\"not_exists\", \"value\": ...} for field predicates. Combine with {\"and\": [...]} or {\"or\": [...]}. Pass null to clear the filter and receive all events.",
+                        "type": ["object", "null"]
+                    }
+                },
+                "required": ["filter"]
             }),
             is_domain_tool: false,
         },

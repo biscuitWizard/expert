@@ -7,8 +7,8 @@ use expert_redis::StreamConsumer;
 use expert_redis::names;
 use expert_types::activity::ActivityLifecycle;
 use expert_types::signals::{
-    AssembleRequest, CheckpointAvailable, EncodeRequest, EncodeResult, FireSignal,
-    GoalUpdateRequest,
+    AssembleRequest, CheckpointAvailable, EncodeRequest, EncodeResult, FilterUpdateRequest,
+    FireSignal, GoalUpdateRequest,
 };
 
 use crate::AppState;
@@ -441,6 +441,91 @@ pub async fn spawn_threshold_feedback_task(state: Arc<AppState>) {
             }
         }
     });
+}
+
+/// Consume filter update requests from llm-gateway (LLM calling update_event_filter()).
+pub async fn spawn_filter_update_consumer(state: Arc<AppState>) {
+    let conn = match expert_redis::connect(&state.config.redis_url).await {
+        Ok(c) => c,
+        Err(e) => {
+            error!(error = %e, "failed to connect for filter update consumer");
+            return;
+        }
+    };
+
+    tokio::spawn(async move {
+        let mut consumer = match StreamConsumer::new(
+            conn,
+            names::REQUESTS_FILTER_UPDATE.to_string(),
+            "orchestrator-filters".to_string(),
+            "orch-filter-0".to_string(),
+            500,
+        )
+        .await
+        {
+            Ok(c) => c,
+            Err(e) => {
+                error!(error = %e, "failed to create filter update consumer");
+                return;
+            }
+        };
+
+        loop {
+            match consumer.consume::<FilterUpdateRequest>().await {
+                Ok(Some((id, req))) => {
+                    let _ = consumer.ack(&id).await;
+                    info!(
+                        activity_id = %req.activity_id,
+                        "received filter update request from LLM"
+                    );
+                    handle_filter_update(&state, req).await;
+                }
+                Ok(None) => {}
+                Err(e) => {
+                    warn!(error = %e, "filter update consumer error");
+                    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                }
+            }
+        }
+    });
+}
+
+async fn handle_filter_update(state: &AppState, req: FilterUpdateRequest) {
+    let errors = req.event_filter.validate();
+    if !errors.is_empty() {
+        warn!(
+            activity_id = %req.activity_id,
+            errors = ?errors,
+            "rejecting invalid filter update from LLM"
+        );
+        return;
+    }
+
+    let mut registry = state.registry.write().await;
+    let activity = match registry.activities.get_mut(&req.activity_id) {
+        Some(a) => a,
+        None => {
+            warn!(activity_id = %req.activity_id, "filter update for unknown activity");
+            return;
+        }
+    };
+
+    activity.event_filter = req.event_filter.clone();
+    activity.state.event_filter = req.event_filter.clone();
+    let worker_id = activity.worker_id.clone();
+    drop(registry);
+
+    let cmd = serde_json::json!({
+        "type": "filter_update",
+        "activity_id": req.activity_id,
+        "event_filter": req.event_filter,
+    });
+    let mut producer = state.producer.write().await;
+    let _ = producer
+        .publish(&names::commands_worker(&worker_id), &cmd)
+        .await;
+
+    info!(activity_id = %req.activity_id, "filter update from LLM propagated");
 }
 
 async fn poll_encode_result_bg(state: &AppState, request_id: &str) -> Option<Vec<f32>> {

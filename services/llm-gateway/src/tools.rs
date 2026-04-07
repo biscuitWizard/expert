@@ -6,7 +6,8 @@ use tracing::{info, warn};
 use expert_redis::StreamProducer;
 use expert_redis::names;
 use expert_types::context::ContextPackage;
-use expert_types::signals::{GoalUpdateRequest, ToolDefinition};
+use expert_types::event_filter::EventFilter;
+use expert_types::signals::{FilterUpdateRequest, GoalUpdateRequest, ToolDefinition};
 use expert_types::training::{Label, LabelSource, TrainingExample};
 
 pub struct ToolRouter<'a> {
@@ -48,6 +49,7 @@ impl<'a> ToolRouter<'a> {
             "update_goal" => self.handle_update_goal(arguments, producer).await,
             "add_goal" => self.handle_add_goal(arguments, producer).await,
             "set_threshold_hint" => self.handle_threshold_hint(arguments, producer).await,
+            "update_event_filter" => self.handle_update_event_filter(arguments, producer).await,
             _ => {
                 self.handle_domain_tool(tool_name, arguments, producer)
                     .await
@@ -315,6 +317,47 @@ impl<'a> ToolRouter<'a> {
         serde_json::json!({"status": "submitted"})
     }
 
+    async fn handle_update_event_filter(
+        &mut self,
+        arguments: &Value,
+        producer: &mut StreamProducer,
+    ) -> Value {
+        let filter_json = match arguments.get("filter") {
+            Some(v) => v.clone(),
+            None => {
+                return serde_json::json!({"error": "missing 'filter' argument"});
+            }
+        };
+
+        let filter: EventFilter = match serde_json::from_value(filter_json) {
+            Ok(f) => f,
+            Err(e) => {
+                return serde_json::json!({"error": format!("invalid filter: {e}")});
+            }
+        };
+
+        let errors = filter.validate();
+        if !errors.is_empty() {
+            return serde_json::json!({"error": "invalid filter", "details": errors});
+        }
+
+        let req = FilterUpdateRequest {
+            activity_id: self.package.activity_id.clone(),
+            event_filter: filter,
+        };
+
+        if let Err(e) = producer.publish(names::REQUESTS_FILTER_UPDATE, &req).await {
+            warn!(error = %e, "failed to publish filter update");
+            return serde_json::json!({"error": "failed to submit filter update"});
+        }
+
+        info!(
+            activity_id = %self.package.activity_id,
+            "update_event_filter() submitted"
+        );
+        serde_json::json!({"status": "submitted"})
+    }
+
     async fn handle_domain_tool(
         &mut self,
         tool_name: &str,
@@ -405,6 +448,7 @@ mod tests {
             make_tool("update_goal"),
             make_tool("add_goal"),
             make_tool("set_threshold_hint"),
+            make_tool("update_event_filter"),
         ];
         let json = build_tools_json(&defs);
         let names: Vec<&str> = json
@@ -418,7 +462,8 @@ mod tests {
                 "recall",
                 "update_goal",
                 "add_goal",
-                "set_threshold_hint"
+                "set_threshold_hint",
+                "update_event_filter",
             ]
         );
     }

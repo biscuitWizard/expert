@@ -40,6 +40,7 @@ async fn main() -> Result<()> {
     workers::spawn_goal_update_consumer(state.clone()).await;
     workers::spawn_checkpoint_consumer(state.clone()).await;
     workers::spawn_threshold_feedback_task(state.clone()).await;
+    workers::spawn_filter_update_consumer(state.clone()).await;
 
     // Start HTTP server
     let app = api::router(state);
