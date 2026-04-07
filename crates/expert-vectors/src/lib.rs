@@ -30,7 +30,7 @@ pub fn mahalanobis_diagonal(
     inv_var: ArrayView1<f32>,
 ) -> f32 {
     let diff = &x - &mean;
-    let weighted = &diff * &diff * &inv_var;
+    let weighted = &diff * &diff * inv_var;
     weighted.sum().sqrt()
 }
 

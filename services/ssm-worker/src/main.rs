@@ -194,10 +194,10 @@ async fn process_event(state: &Arc<RwLock<WorkerState>>, event: Event, _entry_id
     // Check for fire signals
     let mut signals = Vec::new();
     for activity_id in ws.activities.keys().cloned().collect::<Vec<_>>() {
-        if let Some(activity) = ws.activities.get_mut(&activity_id) {
-            if let Some(signal) = activity.take_fire_signal() {
-                signals.push(signal);
-            }
+        if let Some(activity) = ws.activities.get_mut(&activity_id)
+            && let Some(signal) = activity.take_fire_signal()
+        {
+            signals.push(signal);
         }
     }
 

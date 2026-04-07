@@ -1,6 +1,7 @@
 use ndarray::{Array1, Array2, ArrayView1};
 
 /// Trait abstracting the SSM recurrence so implementations can be swapped.
+#[allow(dead_code)]
 pub trait SsmCore: Send + Sync {
     fn update(&mut self, input: &[f32], k: usize) -> Vec<f32>;
     fn state(&self) -> &[f32];
@@ -17,7 +18,6 @@ pub struct LinearSsm {
     pub c: Array2<f32>,          // [max_k, hidden_dim]
     pub d: Array1<f32>,          // [max_k]
     pub h: Array1<f32>,          // [hidden_dim]
-    hidden_dim: usize,
     input_dim: usize,
 }
 
@@ -69,7 +69,6 @@ impl LinearSsm {
             c,
             d,
             h,
-            hidden_dim,
             input_dim,
         }
     }
@@ -110,14 +109,14 @@ impl SsmCore for LinearSsm {
     }
 
     fn load_state(&mut self, state: &[f32]) {
-        let len = state.len().min(self.hidden_dim);
+        let len = state.len().min(self.h.len());
         self.h
             .slice_mut(ndarray::s![..len])
             .assign(&ArrayView1::from(&state[..len]));
     }
 
     fn reset(&mut self) {
-        self.h = Array1::zeros(self.hidden_dim);
+        self.h = Array1::zeros(self.h.len());
     }
 }
 

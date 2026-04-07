@@ -17,7 +17,7 @@ const GOALS_COLLECTION: &str = "goals";
 #[derive(Clone)]
 pub struct QdrantStore {
     client: Qdrant,
-    dim: u64,
+    _dim: u64,
 }
 
 impl QdrantStore {
@@ -38,7 +38,7 @@ impl QdrantStore {
             }
         }
 
-        Ok(Self { client, dim })
+        Ok(Self { client, _dim: dim })
     }
 
     pub async fn insert_episode(&self, episode: &Episode) -> Result<()> {

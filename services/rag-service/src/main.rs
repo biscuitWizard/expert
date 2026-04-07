@@ -20,8 +20,8 @@ struct RagQuery {
     query_type: String,
     #[serde(default)]
     embedding: Option<Vec<f32>>,
-    #[serde(default)]
-    activity_id: Option<String>,
+    #[serde(default, rename = "activity_id")]
+    _activity_id: Option<String>,
     #[serde(default)]
     k: Option<usize>,
 }

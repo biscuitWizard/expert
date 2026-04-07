@@ -133,16 +133,16 @@ async fn drain_stale_fires(state: &AppState, ttl_ms: u64) {
     let mut registry = state.registry.write().await;
 
     for (_, activity) in registry.activities.iter_mut() {
-        if let Some(ref pf) = activity.pending_fire {
-            if now - pf.received_at > ttl_ms {
-                info!(
-                    activity_id = %activity.state.activity_id,
-                    "dropping stale fire signal"
-                );
-                activity.pending_fire = None;
-                if activity.state.lifecycle_state == ActivityLifecycle::Fired {
-                    activity.state.lifecycle_state = ActivityLifecycle::Active;
-                }
+        if let Some(ref pf) = activity.pending_fire
+            && now - pf.received_at > ttl_ms
+        {
+            info!(
+                activity_id = %activity.state.activity_id,
+                "dropping stale fire signal"
+            );
+            activity.pending_fire = None;
+            if activity.state.lifecycle_state == ActivityLifecycle::Fired {
+                activity.state.lifecycle_state = ActivityLifecycle::Active;
             }
         }
     }

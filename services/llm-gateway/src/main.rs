@@ -86,10 +86,10 @@ async fn invoke_llm(
     for iteration in 0..10 {
         let response = client.chat_completion(&messages, &tools_json).await?;
 
-        if let Some(content) = response.get("content").and_then(|c| c.as_str()) {
-            if !content.is_empty() {
-                final_response = content.to_string();
-            }
+        if let Some(content) = response.get("content").and_then(|c| c.as_str())
+            && !content.is_empty()
+        {
+            final_response = content.to_string();
         }
 
         // Check for tool calls
@@ -101,10 +101,10 @@ async fn invoke_llm(
 
         if tool_calls.is_empty() {
             // No more tool calls, done
-            if final_response.is_empty() {
-                if let Some(content) = response.get("content").and_then(|c| c.as_str()) {
-                    final_response = content.to_string();
-                }
+            if final_response.is_empty()
+                && let Some(content) = response.get("content").and_then(|c| c.as_str())
+            {
+                final_response = content.to_string();
             }
             break;
         }
