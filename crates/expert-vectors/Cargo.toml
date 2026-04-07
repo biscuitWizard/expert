@@ -1,0 +1,7 @@
+[package]
+name = "expert-vectors"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+ndarray = { workspace = true }

@@ -1,0 +1,43 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/expert-types",
+    "crates/expert-redis",
+    "crates/expert-vectors",
+    "crates/expert-config",
+    "services/stream-ingestion",
+    "services/encoder",
+    "services/orchestrator",
+    "services/ssm-worker",
+    "services/context-builder",
+    "services/llm-gateway",
+    "services/rag-service",
+    "services/training-service",
+    "crates/expert-tests",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+
+[workspace.dependencies]
+expert-types = { path = "crates/expert-types" }
+expert-redis = { path = "crates/expert-redis" }
+expert-vectors = { path = "crates/expert-vectors" }
+expert-config = { path = "crates/expert-config" }
+
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["full"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+uuid = { version = "1", features = ["v4", "serde"] }
+ndarray = "0.16"
+redis = { version = "0.27", features = ["tokio-comp", "streams"] }
+reqwest = { version = "0.12", features = ["json"] }
+axum = "0.8"
+tower-http = { version = "0.6", features = ["cors", "trace"] }
+sqlx = { version = "0.8", features = ["runtime-tokio", "tls-rustls", "postgres", "json", "uuid", "chrono"] }
+anyhow = "1"
+chrono = { version = "0.4", features = ["serde"] }

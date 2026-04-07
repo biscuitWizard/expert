@@ -1,0 +1,18 @@
+[package]
+name = "encoder"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+expert-types = { workspace = true }
+expert-redis = { workspace = true }
+expert-config = { workspace = true }
+expert-vectors = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+ndarray = { workspace = true }
+reqwest = { workspace = true }
+anyhow = { workspace = true }

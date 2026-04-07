@@ -1,0 +1,9 @@
+[package]
+name = "expert-config"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+serde = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }

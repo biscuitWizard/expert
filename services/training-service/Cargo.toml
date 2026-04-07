@@ -1,0 +1,17 @@
+[package]
+name = "training-service"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+expert-types = { workspace = true }
+expert-redis = { workspace = true }
+expert-config = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+uuid = { workspace = true }
+anyhow = { workspace = true }
+sqlx = { workspace = true }

@@ -1,0 +1,98 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+  REDIS_URL: redis://127.0.0.1:6379
+  DATABASE_URL: postgres://expert:expert_dev@127.0.0.1:5432/expert_training
+  QDRANT_URL: http://127.0.0.1:6334
+
+jobs:
+  check:
+    name: Lint & Unit Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+      - name: Clippy
+        run: cargo clippy --workspace -- -D warnings
+
+      - name: Unit tests
+        run: cargo test --workspace --lib --bins
+
+  integration:
+    name: Integration Tests
+    runs-on: ubuntu-latest
+    services:
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      postgres:
+        image: pgvector/pgvector:pg16
+        ports:
+          - 5432:5432
+        env:
+          POSTGRES_DB: expert_training
+          POSTGRES_USER: expert
+          POSTGRES_PASSWORD: expert_dev
+        options: >-
+          --health-cmd "pg_isready -U expert"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      qdrant:
+        image: qdrant/qdrant:latest
+        ports:
+          - 6333:6333
+          - 6334:6334
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Wait for services
+        run: |
+          for i in $(seq 1 30); do
+            redis-cli -h 127.0.0.1 ping && break || sleep 1
+          done
+          for i in $(seq 1 30); do
+            pg_isready -h 127.0.0.1 -U expert && break || sleep 1
+          done
+          for i in $(seq 1 30); do
+            curl -sf http://127.0.0.1:6333/healthz && break || sleep 1
+          done
+
+      - name: Integration tests
+        run: cargo test --package expert-tests --test '*' -- --test-threads=1
+
+  cli:
+    name: CLI Smoke Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install CLI
+        run: pip install ./cli
+
+      - name: CLI smoke test
+        run: expert --help
