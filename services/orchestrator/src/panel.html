@@ -133,6 +133,26 @@
   .bar-warn { background: var(--yellow); }
   .bar-crit { background: var(--red); }
 
+  .model-tag {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    padding: 0 4px;
+    margin-left: 2px;
+    font-size: 9px;
+    border-radius: 2px;
+    background: rgba(255,255,255,0.04);
+  }
+  .model-dot {
+    width: 5px; height: 5px; border-radius: 50%;
+    flex-shrink: 0;
+  }
+  .model-dot.warm { background: var(--green); }
+  .model-dot.warming { background: var(--yellow); animation: pulse 1.5s infinite; }
+  .model-dot.cold { background: var(--text-dim); opacity: 0.5; }
+  .model-dot.error { background: var(--red); }
+  @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.4; } }
+
   /* Event Log Pane */
   .log-pane { grid-row: 3 / 5; }
   .log-entry {
@@ -335,10 +355,11 @@
     <span class="svc-chip"><span class="svc-dot unknown"></span><span class="svc-name">Redis</span></span>
     <span class="svc-chip"><span class="svc-dot unknown"></span><span class="svc-name">Qdrant</span></span>
     <span class="svc-chip"><span class="svc-dot unknown"></span><span class="svc-name">Postgres</span></span>
-    <span class="svc-chip"><span class="svc-dot unknown"></span><span class="svc-name">Ollama</span></span>
+    <span class="svc-chip" id="ollamaChip"><span class="svc-dot unknown"></span><span class="svc-name">Ollama</span><span class="model-tag"><span class="model-dot cold" id="modelDotLlm"></span><span class="svc-name">LLM</span></span><span class="model-tag"><span class="model-dot cold" id="modelDotEmb"></span><span class="svc-name">EMB</span></span></span>
     <span class="sep"></span>
     <span class="metric" id="metricCpu"><span class="label">CPU</span><span class="val">--</span></span>
     <span class="metric" id="metricMem"><span class="label">MEM</span><span class="val">--</span><span class="bar-bg"><span class="bar-fill bar-ok" style="width:0%"></span></span></span>
+    <span id="gpuMetrics"></span>
     <span class="metric" id="metricSwap"><span class="label">SWP</span><span class="val">--</span></span>
     <span class="sep"></span>
     <span class="metric" id="metricNetRx"><span class="label">RX</span><span class="val">--</span></span>
@@ -642,19 +663,19 @@ async function refreshStatus() {
     const data = await resp.json();
     renderServiceStatus(data.services);
     renderSystemMetrics(data.system);
+    renderGpuMetrics(data.gpus);
   } catch {}
 }
 
 function renderServiceStatus(svcs) {
   const strip = document.getElementById('statusStrip');
   const chips = strip.querySelectorAll('.svc-chip');
-  const order = ['redis', 'qdrant', 'postgres', 'ollama'];
-  order.forEach((name, i) => {
+  const simpleOrder = ['redis', 'qdrant', 'postgres'];
+  simpleOrder.forEach((name, i) => {
     if (!chips[i] || !svcs[name]) return;
     const s = svcs[name];
     const dot = chips[i].querySelector('.svc-dot');
     dot.className = 'svc-dot ' + (s.status === 'up' ? 'up' : s.status === 'down' ? 'down' : 'unknown');
-    // Show latency inline
     let latEl = chips[i].querySelector('.svc-latency');
     if (s.latency_ms !== undefined && s.status === 'up') {
       if (!latEl) { latEl = document.createElement('span'); latEl.className = 'svc-latency'; chips[i].appendChild(latEl); }
@@ -664,6 +685,59 @@ function renderServiceStatus(svcs) {
     }
     chips[i].title = s.error || '';
   });
+
+  const ollama = svcs.ollama;
+  if (ollama) {
+    const chip = document.getElementById('ollamaChip');
+    const dot = chip.querySelector('.svc-dot');
+    dot.className = 'svc-dot ' + (ollama.status === 'up' ? 'up' : ollama.status === 'down' ? 'down' : 'unknown');
+
+    let latEl = chip.querySelector('.svc-latency');
+    if (ollama.latency_ms !== undefined && ollama.status === 'up') {
+      if (!latEl) { latEl = document.createElement('span'); latEl.className = 'svc-latency'; chip.appendChild(latEl); }
+      latEl.textContent = ollama.latency_ms + 'ms';
+    } else if (latEl) {
+      latEl.remove();
+    }
+
+    if (ollama.models) {
+      const llmDot = document.getElementById('modelDotLlm');
+      const embDot = document.getElementById('modelDotEmb');
+
+      const llm = ollama.models.llm;
+      if (llm) {
+        llmDot.className = 'model-dot ' + (llm.status || 'cold');
+        llmDot.title = (llm.name || 'LLM') + ': ' + (llm.status || 'cold') + (llm.vram_bytes ? ' (' + fmtBytes(llm.vram_bytes) + ')' : '');
+      }
+      const emb = ollama.models.embeddings;
+      if (emb) {
+        embDot.className = 'model-dot ' + (emb.status || 'cold');
+        embDot.title = (emb.name || 'Embeddings') + ': ' + (emb.status || 'cold') + (emb.vram_bytes ? ' (' + fmtBytes(emb.vram_bytes) + ')' : '');
+      }
+    }
+  }
+}
+
+function renderGpuMetrics(gpus) {
+  const container = document.getElementById('gpuMetrics');
+  if (!gpus || !Array.isArray(gpus) || gpus.length === 0) {
+    container.innerHTML = '';
+    return;
+  }
+
+  let html = '<span class="sep"></span>';
+  for (const gpu of gpus) {
+    const usedGb = (gpu.vram_used_mb / 1024).toFixed(1);
+    const totalGb = (gpu.vram_total_mb / 1024).toFixed(1);
+    const pct = gpu.vram_total_mb > 0 ? (gpu.vram_used_mb / gpu.vram_total_mb * 100) : 0;
+    const barClass = pct > 95 ? 'bar-crit' : pct > 80 ? 'bar-warn' : 'bar-ok';
+    html += `<span class="metric" title="${escHtml(gpu.name)} | ${gpu.utilization_pct}% util | ${gpu.temp_c}°C">`;
+    html += `<span class="label">GPU${gpu.index}</span>`;
+    html += `<span class="val">${usedGb}/${totalGb}G</span>`;
+    html += `<span class="bar-bg"><span class="bar-fill ${barClass}" style="width:${pct.toFixed(0)}%"></span></span>`;
+    html += `</span>`;
+  }
+  container.innerHTML = html;
 }
 
 function renderSystemMetrics(sys) {

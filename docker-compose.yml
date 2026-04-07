@@ -32,6 +32,10 @@ services:
       - "11434:11434"
     volumes:
       - ollama-data:/root/.ollama
+    environment:
+      OLLAMA_KEEP_ALIVE: "30m"
+      OLLAMA_MAX_LOADED_MODELS: 2
+      OLLAMA_FLASH_ATTENTION: 1
     restart: unless-stopped
 
   # --- Expert services (build from workspace) ---
@@ -53,6 +57,13 @@ services:
       DATABASE_URL: postgres://expert:expert_dev@postgres:5432/expert_training
     depends_on:
       - redis
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
 
   encoder:
     build:

@@ -55,6 +55,10 @@ pub struct Config {
     pub medium_batch_size: usize,
     pub medium_learning_rate: f32,
 
+    // Ollama warmup
+    pub warmup_interval_secs: u64,
+    pub warmup_keep_alive: String,
+
     // Debug panel
     pub panel_user: Option<String>,
     pub panel_pass: Option<String>,
@@ -85,7 +89,7 @@ impl Config {
             encoder_max_batch: env_parse("ENCODER_MAX_BATCH", 32),
             encoder_flush_ms: env_parse("ENCODER_FLUSH_MS", 10),
 
-            fire_queue_ttl_ms: env_parse("FIRE_QUEUE_TTL_MS", 30_000),
+            fire_queue_ttl_ms: env_parse("FIRE_QUEUE_TTL_MS", 120_000),
             debounce_ms: env_parse("DEBOUNCE_MS", 500),
             refractory_ms: env_parse("REFRACTORY_MS", 5_000),
 
@@ -114,6 +118,9 @@ impl Config {
             medium_label_threshold: env_parse("MEDIUM_LABEL_THRESHOLD", 20),
             medium_batch_size: env_parse("MEDIUM_BATCH_SIZE", 10),
             medium_learning_rate: env_parse("MEDIUM_LEARNING_RATE", 0.01),
+
+            warmup_interval_secs: env_parse("WARMUP_INTERVAL_SECS", 120),
+            warmup_keep_alive: env_or("WARMUP_KEEP_ALIVE", "30m"),
 
             panel_user: env::var("PANEL_USER").ok(),
             panel_pass: env::var("PANEL_PASS").ok(),

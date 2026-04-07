@@ -123,6 +123,14 @@ pub struct SummarizeResult {
     pub compressed_narrative: String,
 }
 
+/// Published by llm-gateway after an LLM invocation finishes (success or failure).
+/// Consumed by the orchestrator to clear the pending fire and reset lifecycle.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InvocationComplete {
+    pub activity_id: String,
+    pub success: bool,
+}
+
 /// Notification from training-service that a new model checkpoint is available.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CheckpointAvailable {

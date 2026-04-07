@@ -170,7 +170,7 @@ async fn consume_one_event(
     Ok(None)
 }
 
-async fn process_event(state: &Arc<RwLock<WorkerState>>, event: Event, _entry_id: &str) {
+async fn process_event(state: &Arc<RwLock<WorkerState>>, event: Event, entry_id: &str) {
     let mut ws = state.write().await;
     let now = now_ms();
 
@@ -182,11 +182,10 @@ async fn process_event(state: &Arc<RwLock<WorkerState>>, event: Event, _entry_id
         .map(|(id, _)| id.clone())
         .collect();
 
-    // Clone config to avoid borrow conflict with activities
     let config = ws.config.clone();
     for activity_id in activity_ids {
         if let Some(activity) = ws.activities.get_mut(&activity_id) {
-            activity.process_event(&event, now, &config);
+            activity.process_event(&event, entry_id, now, &config);
         }
     }
 
@@ -206,7 +205,6 @@ async fn process_event(state: &Arc<RwLock<WorkerState>>, event: Event, _entry_id
         } else {
             info!(
                 activity_id = %signal.activity_id,
-                goals = ?signal.firing_goal_ids,
                 "published fire signal"
             );
         }

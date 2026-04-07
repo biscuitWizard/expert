@@ -1,7 +1,9 @@
 pub mod names;
+pub mod service_log;
 pub mod state;
 pub mod streams;
 
+pub use service_log::ServiceLogger;
 pub use state::StateStore;
 pub use streams::{StreamConsumer, StreamProducer};
 

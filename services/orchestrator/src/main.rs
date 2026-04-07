@@ -5,6 +5,7 @@ mod registry;
 mod workers;
 
 use anyhow::Result;
+use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{info, warn};
@@ -14,12 +15,21 @@ use expert_config::Config;
 use expert_redis::StreamProducer;
 use registry::ActivityRegistry;
 
+#[derive(Debug, Clone, PartialEq)]
+pub enum ModelWarmupStatus {
+    Cold,
+    Warming,
+    Warm,
+    Error(String),
+}
+
 pub struct AppState {
     pub config: Config,
     pub registry: RwLock<ActivityRegistry>,
     pub producer: RwLock<StreamProducer>,
     pub state_store: RwLock<expert_redis::StateStore>,
     pub event_log: Arc<EventLog>,
+    pub warmup_status: RwLock<HashMap<String, ModelWarmupStatus>>,
 }
 
 #[tokio::main]
@@ -50,12 +60,17 @@ async fn main() -> Result<()> {
         None
     };
 
+    let mut initial_warmup = HashMap::new();
+    initial_warmup.insert(config.llm_model.clone(), ModelWarmupStatus::Cold);
+    initial_warmup.insert(config.embeddings_model.clone(), ModelWarmupStatus::Cold);
+
     let state = Arc::new(AppState {
         config,
         registry: RwLock::new(ActivityRegistry::new()),
         producer: RwLock::new(producer),
         state_store: RwLock::new(state_store),
         event_log: event_log.clone(),
+        warmup_status: RwLock::new(initial_warmup),
     });
 
     // Spawn background workers
@@ -64,6 +79,9 @@ async fn main() -> Result<()> {
     workers::spawn_checkpoint_consumer(state.clone()).await;
     workers::spawn_threshold_feedback_task(state.clone()).await;
     workers::spawn_filter_update_consumer(state.clone()).await;
+    workers::spawn_invocation_complete_consumer(state.clone()).await;
+    workers::spawn_service_log_consumer(state.clone()).await;
+    workers::spawn_warmup_task(state.clone()).await;
 
     // Build HTTP router
     let app = if panel_enabled {

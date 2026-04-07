@@ -8,7 +8,7 @@ use tracing::{error, info, warn};
 
 use expert_config::Config;
 use expert_redis::names;
-use expert_redis::{StreamConsumer, StreamProducer};
+use expert_redis::{ServiceLogger, StreamConsumer, StreamProducer};
 use expert_types::event::Event;
 use expert_types::signals::{EncodeRequest, EncodeResult};
 
@@ -79,6 +79,7 @@ async fn main() -> Result<()> {
     let model = OllamaEmbedder::new(&config.ollama_embeddings_url, &config.embeddings_model);
     let conn = expert_redis::connect(&config.redis_url).await?;
     let mut producer = StreamProducer::new(conn.clone(), config.stream_maxlen);
+    let mut svc_log = ServiceLogger::new(producer.clone(), "encoder");
 
     let (batch_tx, mut batch_rx) = mpsc::channel::<BatchItem>(256);
 
@@ -217,6 +218,12 @@ async fn main() -> Result<()> {
             Ok(embs) => embs,
             Err(e) => {
                 error!(error = %e, batch_size = texts.len(), "embedding request failed, dropping batch");
+                svc_log
+                    .error(
+                        format!("Embedding request failed (batch_size={}): {e}", texts.len()),
+                        None,
+                    )
+                    .await;
                 continue;
             }
         };
@@ -227,6 +234,16 @@ async fn main() -> Result<()> {
                 got = embeddings.len(),
                 "embedding count mismatch, dropping batch"
             );
+            svc_log
+                .error(
+                    format!(
+                        "Embedding count mismatch: expected {}, got {}",
+                        batch.len(),
+                        embeddings.len()
+                    ),
+                    None,
+                )
+                .await;
             continue;
         }
 

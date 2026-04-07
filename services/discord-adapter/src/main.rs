@@ -9,7 +9,7 @@ use anyhow::Result;
 use tracing::{error, info};
 
 use expert_config::Config;
-use expert_redis::{StateStore, StreamProducer};
+use expert_redis::{ServiceLogger, StateStore, StreamProducer};
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -57,6 +57,7 @@ async fn main() -> Result<()> {
     let action_conn = conn.clone();
     let mut action_producer = producer.clone();
     let mut action_state = StateStore::new(conn.clone());
+    let action_svc_log = ServiceLogger::new(producer.clone(), "discord-adapter");
     tokio::spawn(async move {
         if let Err(e) = actions::run_action_consumer(
             action_conn,
@@ -64,6 +65,7 @@ async fn main() -> Result<()> {
             &mut action_state,
             &action_rest,
             &action_stream_id,
+            action_svc_log,
         )
         .await
         {

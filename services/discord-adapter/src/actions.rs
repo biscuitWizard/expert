@@ -6,7 +6,7 @@ use serde::Deserialize;
 use serde_json::Value;
 use tracing::{info, warn};
 
-use expert_redis::{StateStore, StreamConsumer, StreamProducer, names};
+use expert_redis::{ServiceLogger, StateStore, StreamConsumer, StreamProducer, names};
 use expert_types::event::Event;
 
 use crate::rest::DiscordRestClient;
@@ -27,6 +27,7 @@ pub async fn run_action_consumer(
     state: &mut StateStore,
     rest: &DiscordRestClient,
     stream_id: &str,
+    mut svc_log: ServiceLogger,
 ) -> Result<()> {
     let action_stream = names::actions(stream_id);
     let group = format!("adapter-{stream_id}");
@@ -47,16 +48,26 @@ pub async fn run_action_consumer(
                     warn!(error = %e, "failed to ack action");
                 }
 
-                // Fold result back as an event
                 let (raw, result_metadata) = match &result {
                     Ok(v) => (
                         format!("[action:{}] success", payload.tool_name),
                         serde_json::json!({ "status": "success", "result": v }),
                     ),
-                    Err(e) => (
-                        format!("[action:{}] error: {}", payload.tool_name, e),
-                        serde_json::json!({ "status": "error", "error": e.to_string() }),
-                    ),
+                    Err(e) => {
+                        svc_log
+                            .error(
+                                format!("Action {} failed: {e}", payload.tool_name),
+                                Some(serde_json::json!({
+                                    "tool": payload.tool_name,
+                                    "arguments": payload.arguments,
+                                })),
+                            )
+                            .await;
+                        (
+                            format!("[action:{}] error: {}", payload.tool_name, e),
+                            serde_json::json!({ "status": "error", "error": e.to_string() }),
+                        )
+                    }
                 };
 
                 let mut metadata = HashMap::new();

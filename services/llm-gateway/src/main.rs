@@ -8,9 +8,9 @@ use tracing::{error, info, warn};
 
 use expert_config::Config;
 use expert_redis::names;
-use expert_redis::{StreamConsumer, StreamProducer};
+use expert_redis::{ServiceLogger, StreamConsumer, StreamProducer};
 use expert_types::context::{ActivityExchange, ContextPackage, Episode, Exchange, ToolCall};
-use expert_types::signals::{SummarizeRequest, SummarizeResult};
+use expert_types::signals::{InvocationComplete, SummarizeRequest, SummarizeResult};
 
 use ollama::{LlmClient, OllamaClient};
 use tools::ToolRouter;
@@ -47,6 +47,7 @@ async fn main() -> Result<()> {
 
     let client = OllamaClient::new(&config.ollama_url, &config.llm_model);
     let mut producer = producer;
+    let mut svc_log = ServiceLogger::new(producer.clone(), "llm-gateway");
 
     loop {
         match consumer.consume::<ContextPackage>().await {
@@ -58,13 +59,36 @@ async fn main() -> Result<()> {
                     "received context package, invoking LLM"
                 );
 
-                match invoke_llm(&client, &package, &config, &mut producer).await {
+                let result = invoke_llm(&client, &package, &config, &mut producer).await;
+                let success = result.is_ok();
+
+                match &result {
                     Ok(_) => {
                         info!(activity_id = %package.activity_id, "LLM invocation complete");
                     }
                     Err(e) => {
                         error!(error = %e, activity_id = %package.activity_id, "LLM invocation failed");
+                        svc_log
+                            .error(
+                                format!(
+                                    "LLM invocation failed for {}: {e}",
+                                    &package.activity_id[..8]
+                                ),
+                                Some(serde_json::json!({ "activity_id": package.activity_id })),
+                            )
+                            .await;
                     }
+                }
+
+                let complete = InvocationComplete {
+                    activity_id: package.activity_id.clone(),
+                    success,
+                };
+                if let Err(e) = producer
+                    .publish(names::SIGNALS_INVOCATION_COMPLETE, &complete)
+                    .await
+                {
+                    error!(error = %e, "failed to publish invocation complete signal");
                 }
             }
             Ok(None) => {}

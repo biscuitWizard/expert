@@ -6,7 +6,7 @@ use tracing::{error, info, warn};
 
 use expert_config::Config;
 use expert_redis::names;
-use expert_redis::{StreamConsumer, StreamProducer};
+use expert_redis::{ServiceLogger, StreamConsumer, StreamProducer};
 use expert_types::context::{ContextPackage, Episode, Exchange};
 use expert_types::event::Event;
 use expert_types::signals::AssembleRequest;
@@ -53,6 +53,7 @@ async fn main() -> Result<()> {
     .await?;
 
     let mut rag_producer = StreamProducer::new(conn.clone(), config.stream_maxlen);
+    let mut svc_log = ServiceLogger::new(producer.clone(), "context-builder");
 
     loop {
         match consumer.consume::<AssembleRequest>().await {
@@ -68,12 +69,30 @@ async fn main() -> Result<()> {
                     Ok(package) => {
                         if let Err(e) = producer.publish(names::PACKAGES_READY, &package).await {
                             error!(error = %e, "failed to publish context package");
+                            svc_log
+                                .error(
+                                    format!(
+                                        "Failed to publish context package for {}: {e}",
+                                        &req.activity_id[..8]
+                                    ),
+                                    None,
+                                )
+                                .await;
                         } else {
                             info!(activity_id = %req.activity_id, "context package published");
                         }
                     }
                     Err(e) => {
                         error!(error = %e, activity_id = %req.activity_id, "context assembly failed");
+                        svc_log
+                            .error(
+                                format!(
+                                    "Context assembly failed for {}: {e}",
+                                    &req.activity_id[..8]
+                                ),
+                                Some(serde_json::json!({ "activity_id": req.activity_id })),
+                            )
+                            .await;
                     }
                 }
             }
@@ -275,7 +294,9 @@ fn render_prompt(
 
     // === TRIGGER EVENT ===
     prompt.push_str("=== TRIGGER EVENT ===\n");
-    prompt.push_str(&format!("{}\n\n", trigger_event.raw));
+    prompt.push_str(&format!("{}\n", trigger_event.raw));
+    render_event_metadata(&mut prompt, trigger_event);
+    prompt.push('\n');
 
     // === RECENT STREAM ACTIVITY ===
     prompt.push_str("=== RECENT STREAM ACTIVITY ===\n");
@@ -283,6 +304,7 @@ fn render_prompt(
     let display_events = &recent_events[recent_events.len().saturating_sub(max_recent)..];
     for (i, event) in display_events.iter().enumerate() {
         prompt.push_str(&format!("[{}] {}\n", i, event.raw));
+        render_event_metadata(&mut prompt, event);
     }
     prompt.push('\n');
 
@@ -320,4 +342,28 @@ fn render_prompt(
     prompt.push_str("\nUse suppress() if this invocation was not useful. Use recall() if you notice earlier events that should have triggered an invocation.\n");
 
     prompt
+}
+
+fn render_event_metadata(prompt: &mut String, event: &Event) {
+    let m = &event.metadata;
+    let keys: &[&str] = &[
+        "author_id",
+        "channel_id",
+        "message_id",
+        "guild_id",
+        "user_id",
+        "reply_to_message_id",
+        "tool_name",
+    ];
+    let parts: Vec<String> = keys
+        .iter()
+        .filter_map(|&k| {
+            m.get(k)
+                .and_then(|v| v.as_str())
+                .map(|v| format!("{k}={v}"))
+        })
+        .collect();
+    if !parts.is_empty() {
+        prompt.push_str(&format!("  ({})\n", parts.join(", ")));
+    }
 }

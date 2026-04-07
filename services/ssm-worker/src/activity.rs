@@ -85,7 +85,7 @@ impl ActivityInstance {
         }
     }
 
-    pub fn process_event(&mut self, event: &Event, now: u64, _config: &Config) {
+    pub fn process_event(&mut self, event: &Event, entry_id: &str, now: u64, _config: &Config) {
         // Check refractory
         if self.lifecycle == ActivityLifecycle::Refractory {
             if now >= self.refractory_until {
@@ -171,9 +171,7 @@ impl ActivityInstance {
         let scores = self.ssm.update(&features, k);
         self.event_count += 1;
 
-        // Track entry ID for XREVRANGE bounds
-        // Use the event sequence as a proxy for the entry ID
-        self.last_entry_id = Some(format!("{}", event.sequence));
+        self.last_entry_id = Some(entry_id.to_string());
 
         // Threshold check (only in Active state, not during pending debounce)
         if self.lifecycle == ActivityLifecycle::Active && self.pending_fire_goals.is_none() {

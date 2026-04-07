@@ -19,3 +19,4 @@ tower-http = { workspace = true }
 qdrant-client = { workspace = true }
 tokio-stream = { workspace = true }
 futures-util = { workspace = true }
+reqwest = { workspace = true }

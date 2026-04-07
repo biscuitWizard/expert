@@ -15,7 +15,7 @@ use tokio_stream::StreamExt;
 use tokio_stream::wrappers::BroadcastStream;
 use tracing::warn;
 
-use crate::AppState;
+use crate::{AppState, ModelWarmupStatus};
 
 static PANEL_HTML: &str = include_str!("panel.html");
 
@@ -433,14 +433,17 @@ const CHECK_TIMEOUT: Duration = Duration::from_millis(2000);
 async fn system_status(State(state): State<Arc<PanelState>>) -> impl IntoResponse {
     let config = &state.app.config;
 
-    let (redis, qdrant, postgres, ollama) = tokio::join!(
+    let (redis, qdrant, postgres, ollama_ps, system, gpus) = tokio::join!(
         check_redis(&config.redis_url),
         check_qdrant(&state.qdrant),
         check_tcp_from_url(&config.postgres_url),
-        check_tcp_from_url(&config.ollama_url),
+        check_ollama_ps(&config.ollama_url),
+        read_proc_metrics(),
+        read_gpu_metrics(),
     );
 
-    let system = read_proc_metrics().await;
+    let warmup = state.app.warmup_status.read().await;
+    let ollama = build_ollama_status(ollama_ps, &warmup, config);
 
     Json(serde_json::json!({
         "services": {
@@ -450,6 +453,7 @@ async fn system_status(State(state): State<Arc<PanelState>>) -> impl IntoRespons
             "ollama": ollama,
         },
         "system": system,
+        "gpus": gpus,
     }))
 }
 
@@ -554,6 +558,143 @@ async fn check_tcp_from_url(url: &str) -> serde_json::Value {
             "error": "timeout",
         }),
     }
+}
+
+async fn check_ollama_ps(base_url: &str) -> serde_json::Value {
+    let url = format!("{}/api/ps", base_url.trim_end_matches('/'));
+    let client = reqwest::Client::new();
+    let start = Instant::now();
+
+    match tokio::time::timeout(CHECK_TIMEOUT, client.get(&url).send()).await {
+        Ok(Ok(resp)) => match resp.json::<serde_json::Value>().await {
+            Ok(body) => {
+                let latency = start.elapsed().as_millis();
+                let mut loaded = serde_json::Map::new();
+
+                if let Some(models) = body.get("models").and_then(|m| m.as_array()) {
+                    for m in models {
+                        let name = m
+                            .get("name")
+                            .or_else(|| m.get("model"))
+                            .and_then(|n| n.as_str())
+                            .unwrap_or("unknown");
+                        let size_vram = m.get("size_vram").and_then(|v| v.as_u64()).unwrap_or(0);
+                        loaded.insert(
+                            name.to_string(),
+                            serde_json::json!({ "vram_bytes": size_vram }),
+                        );
+                    }
+                }
+
+                serde_json::json!({
+                    "status": "up",
+                    "latency_ms": latency,
+                    "loaded_models": loaded,
+                })
+            }
+            Err(e) => serde_json::json!({
+                "status": "up",
+                "latency_ms": start.elapsed().as_millis(),
+                "error": format!("parse error: {e}"),
+            }),
+        },
+        Ok(Err(e)) => serde_json::json!({
+            "status": "down",
+            "error": format!("{e}"),
+        }),
+        Err(_) => serde_json::json!({
+            "status": "down",
+            "error": "timeout",
+        }),
+    }
+}
+
+fn build_ollama_status(
+    ps: serde_json::Value,
+    warmup: &std::collections::HashMap<String, ModelWarmupStatus>,
+    config: &expert_config::Config,
+) -> serde_json::Value {
+    let status = ps.get("status").and_then(|s| s.as_str()).unwrap_or("down");
+    let latency = ps.get("latency_ms").cloned();
+
+    let loaded = ps
+        .get("loaded_models")
+        .and_then(|m| m.as_object())
+        .cloned()
+        .unwrap_or_default();
+
+    let model_status = |name: &str| -> serde_json::Value {
+        let warmup_str = match warmup.get(name) {
+            Some(ModelWarmupStatus::Warm) => "warm",
+            Some(ModelWarmupStatus::Warming) => "warming",
+            Some(ModelWarmupStatus::Error(_)) => "error",
+            Some(ModelWarmupStatus::Cold) | None => "cold",
+        };
+
+        let vram_bytes = loaded
+            .get(name)
+            .and_then(|v| v.get("vram_bytes"))
+            .and_then(|v| v.as_u64());
+
+        let mut obj = serde_json::json!({ "status": warmup_str, "name": name });
+        if let Some(vram) = vram_bytes {
+            obj["vram_bytes"] = serde_json::json!(vram);
+        }
+        if let Some(ModelWarmupStatus::Error(msg)) = warmup.get(name) {
+            obj["error"] = serde_json::json!(msg);
+        }
+        obj
+    };
+
+    let mut result = serde_json::json!({
+        "status": status,
+        "models": {
+            "llm": model_status(&config.llm_model),
+            "embeddings": model_status(&config.embeddings_model),
+        },
+    });
+
+    if let Some(lat) = latency {
+        result["latency_ms"] = lat;
+    }
+
+    result
+}
+
+async fn read_gpu_metrics() -> serde_json::Value {
+    let output = tokio::process::Command::new("nvidia-smi")
+        .args([
+            "--query-gpu=index,name,memory.used,memory.total,utilization.gpu,temperature.gpu",
+            "--format=csv,nounits,noheader",
+        ])
+        .output()
+        .await;
+
+    let output = match output {
+        Ok(o) if o.status.success() => o,
+        _ => return serde_json::json!([]),
+    };
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let gpus: Vec<serde_json::Value> = stdout
+        .lines()
+        .filter_map(|line| {
+            let fields: Vec<&str> = line.split(',').map(|s| s.trim()).collect();
+            if fields.len() < 6 {
+                return None;
+            }
+            Some(serde_json::json!({
+                "index": fields[0].parse::<u32>().unwrap_or(0),
+                "name": fields[1],
+                "vram_used_mb": fields[2].parse::<u64>().unwrap_or(0),
+                "vram_total_mb": fields[3].parse::<u64>().unwrap_or(0),
+                "utilization_pct": fields[4].parse::<u32>().unwrap_or(0),
+                "temp_c": fields[5].parse::<u32>().unwrap_or(0),
+            }))
+        })
+        .collect();
+
+    serde_json::json!(gpus)
 }
 
 async fn read_proc_metrics() -> serde_json::Value {
