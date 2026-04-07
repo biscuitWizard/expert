@@ -2,7 +2,7 @@
 
 ## Status
 
-**Decided: Qwen3-Embedding-8B served via dedicated llamacpp instance.**
+**Decided: Qwen3-Embedding-8B served via Ollama.**
 
 ## Context
 
@@ -17,18 +17,18 @@ The encoder service (spec invariant 1: domain-agnostic, shared singleton) conver
 - **Dimensions:** 4096 default. Supports Matryoshka Representation Learning (MRL) for configurable output dimensions from 32 to 8192 without retraining.
 - **Parameters:** 8B. Requires GPU for practical inference throughput.
 - **Quality:** State-of-the-art multilingual embedding model. Strong performance on retrieval benchmarks (MTEB).
-- **Serving:** Available in GGUF format for llamacpp. Served via the `/embedding` endpoint.
+- **Serving:** Served via Ollama's `/api/embed` endpoint. Model configured via `EMBEDDINGS_MODEL` env var.
 
 ## Serving Architecture
 
-A **dedicated llamacpp container** runs Qwen3-Embedding-8B, separate from the LLM inference container. This avoids contention between embedding requests (high volume, low latency) and LLM completions (low volume, high latency, large context).
+A single **Ollama instance** serves both the chat/completion model (Qwen3-32B) and the embedding model (Qwen3-Embedding-8B). Ollama handles model multiplexing internally, loading/unloading models as needed. Separate `OLLAMA_URL` and `OLLAMA_EMBEDDINGS_URL` config fields allow splitting to dedicated instances if contention becomes an issue.
 
 ```
-encoder service  ->  llamacpp-embeddings (port 8081)  ->  Qwen3-Embedding-8B.gguf
-llm-gateway      ->  llamacpp (port 8080)             ->  LLM model.gguf
+encoder service  ->  Ollama (OLLAMA_EMBEDDINGS_URL)  ->  Qwen3-Embedding-8B
+llm-gateway      ->  Ollama (OLLAMA_URL)             ->  Qwen3-32B
 ```
 
-The encoder service implements the `LlamaCppModel` backend, calling the embedding container's `/embedding` endpoint.
+The encoder service implements the `OllamaEmbedder` backend, calling the Ollama `/api/embed` endpoint.
 
 ## Dimension Strategy
 
@@ -54,9 +54,9 @@ The recommended approach is option 2: a projection layer `P: [hidden_dim, 4096]`
 
 ## Consequences
 
-- A dedicated `llamacpp-embeddings` container is added to docker-compose.
-- The encoder service uses the `LlamaCppModel` backend implementation, configured to point at the embeddings container.
+- Ollama serves both LLM and embedding models from a single container (or split across dedicated instances via separate URL config).
+- The encoder service uses the `OllamaEmbedder` backend implementation, configured via `OLLAMA_EMBEDDINGS_URL` and `EMBEDDINGS_MODEL` env vars.
 - All vector dimensions throughout the system are 4096: Qdrant collections, goal embeddings, event embeddings, training store `goal_embedding` column.
 - The SSM uses a learned input projection from 4096 to a smaller hidden dimension (e.g., 256).
 - Micro-batching in the encoder service remains important: Qwen3-Embedding-8B benefits from batched inference on GPU.
-- The `EmbeddingModel` trait in the encoder DESIGN.md is implemented as `LlamaCppModel`. The trait boundary is preserved for future model swaps.
+- The `EmbeddingModel` trait in the encoder DESIGN.md is implemented as `OllamaEmbedder`. The trait boundary is preserved for future model swaps.

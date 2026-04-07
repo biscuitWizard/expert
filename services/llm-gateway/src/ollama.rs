@@ -8,24 +8,27 @@ pub trait LlmClient: Send + Sync {
     async fn summarize(&self, text: &str) -> Result<String>;
 }
 
-pub struct LlamaCppClient {
+pub struct OllamaClient {
     client: reqwest::Client,
     url: String,
+    model: String,
 }
 
-impl LlamaCppClient {
-    pub fn new(base_url: &str) -> Self {
+impl OllamaClient {
+    pub fn new(base_url: &str, model: &str) -> Self {
         Self {
             client: reqwest::Client::new(),
             url: format!("{}/v1/chat/completions", base_url.trim_end_matches('/')),
+            model: model.to_string(),
         }
     }
 }
 
 #[async_trait]
-impl LlmClient for LlamaCppClient {
+impl LlmClient for OllamaClient {
     async fn chat_completion(&self, messages: &[Value], tools: &[Value]) -> Result<Value> {
         let mut body = serde_json::json!({
+            "model": self.model,
             "messages": messages,
             "temperature": 0.7,
             "max_tokens": 2048,
@@ -70,6 +73,7 @@ impl LlmClient for LlamaCppClient {
         ];
 
         let body = serde_json::json!({
+            "model": self.model,
             "messages": messages,
             "temperature": 0.3,
             "max_tokens": 1024,

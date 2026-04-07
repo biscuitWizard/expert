@@ -13,7 +13,7 @@ Semantic attention system for live event-driven AI agents. Determines **when** a
 | **orchestrator** | Control plane: activity lifecycle, goal CRUD, worker assignment, fire queue |
 | **ssm-worker** | SSM recurrence, scoring, debounce, adaptive thresholds |
 | **context-builder** | Assemble natural-language context packages for LLM invocation |
-| **llm-gateway** | llamacpp integration, tool-call loop, feedback routing |
+| **llm-gateway** | Ollama integration, tool-call loop, feedback routing |
 | **rag-service** | Graph DB API: episodes, patterns, goals, session history |
 | **training-service** | Training store API: labeled examples, consensus, retraining |
 | **expert-cli** | Python CLI calling orchestrator REST API |
@@ -35,8 +35,8 @@ See [docs/architecture.md](docs/architecture.md) for full data-flow diagrams and
 git clone <repo-url> && cd expert
 make setup          # installs git pre-commit hook
 
-# 2. Start infrastructure (Redis, PostgreSQL+pgvector, Qdrant, llamacpp)
-docker compose up -d redis postgres qdrant llamacpp llamacpp-embeddings
+# 2. Start infrastructure (Redis, PostgreSQL+pgvector, Qdrant, Ollama)
+docker compose up -d redis postgres qdrant ollama
 
 # 3. Build and run services (pick one)
 cargo build --workspace                          # build all
@@ -48,7 +48,12 @@ pip install -e ./cli
 expert status
 ```
 
-Place GGUF model files in `./models/` — the compose file expects `model.gguf` (chat) and `qwen3-embedding-8b.gguf` (embeddings).
+Pull models into Ollama after the container starts:
+
+```bash
+docker compose exec ollama ollama pull qwen3:32b
+docker compose exec ollama ollama pull qwen3-embedding:8b
+```
 
 ## Development
 
@@ -103,8 +108,7 @@ The project uses Rust edition 2024. The exact compiler version is pinned in [`ru
 | Redis | `redis:7` | Event bus (Streams), state store (KV), sequence counters |
 | PostgreSQL | `pgvector/pgvector:pg16` | Training store |
 | Qdrant | `qdrant/qdrant:latest` | RAG vector store |
-| llamacpp | `ghcr.io/ggerganov/llama.cpp:server` | LLM inference |
-| llamacpp-embeddings | `ghcr.io/ggerganov/llama.cpp:server` | Embedding model (Qwen3-Embedding-8B, 4096-dim) |
+| Ollama | `ollama/ollama:latest` | LLM inference (Qwen3-32B) and embeddings (Qwen3-Embedding-8B, 4096-dim) |
 
 ## CI
 

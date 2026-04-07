@@ -195,4 +195,4 @@ At that point, implement Mamba (Option B) behind the same `SsmCore` trait. The u
 - First model weights are initialized for stability (scaled identity A), not trained. Early scoring quality depends on feature engineering and initial thresholds.
 - The self-training feedback loop begins producing useful labels immediately. The linear SSM converges to useful scoring within ~50-100 labels.
 - MAML meta-learning is validated first with the linear SSM, where it works best (few parameters, smooth loss landscape).
-- No GPU dependencies in the ssm-worker. GPU resources are reserved for llamacpp.
+- No GPU dependencies in the ssm-worker. GPU resources are reserved for Ollama.

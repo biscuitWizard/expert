@@ -31,7 +31,7 @@ The encoder is the shared singleton embedding service for the Expert attention f
 ## Dependencies
 
 - **Redis** — stream consumption and publishing.
-- **llamacpp-embeddings** — dedicated llamacpp instance running **Qwen3-Embedding-8B** (4096-dim, Matryoshka-capable). See [encoder selection ADR](../../docs/decisions/encoder-selection.md).
+- **Ollama** — embedding inference via `/api/embed` endpoint, running **Qwen3-Embedding-8B** (4096-dim, Matryoshka-capable). Model configured via `EMBEDDINGS_MODEL` env var. See [encoder selection ADR](../../docs/decisions/encoder-selection.md).
 
 ## Operational Model
 

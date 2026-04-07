@@ -13,7 +13,7 @@ The system decomposes into 8 Rust microservices, a Python CLI, 5 shared library 
 | [orchestrator](../services/orchestrator/) | Control plane: activity lifecycle, goal CRUD, worker assignment, fire queue, backpressure | No |
 | [ssm-worker](../services/ssm-worker/) | SSM recurrence, scoring, debounce, adaptive thresholds (pooled, many activities per worker) | Yes |
 | [context-builder](../services/context-builder/) | Assemble natural language context packages for LLM invocation | No |
-| [llm-gateway](../services/llm-gateway/) | llamacpp integration, tool call loop, feedback routing, alignment guardrails | No |
+| [llm-gateway](../services/llm-gateway/) | Ollama integration, tool call loop, feedback routing, alignment guardrails | No |
 | [rag-service](../services/rag-service/) | Graph DB API: episodes, patterns, goals, session history, consolidation | No |
 | [training-service](../services/training-service/) | Training store API: labeled examples, consensus, SLOW/MEDIUM retraining | No |
 | [expert-cli](../cli/) | Python CLI calling orchestrator REST API | N/A |
@@ -35,8 +35,7 @@ The system decomposes into 8 Rust microservices, a Python CLI, 5 shared library 
 | Redis | `redis:7` | Event bus (Streams), activity state store (KV), sequence counters |
 | PostgreSQL | `pgvector/pgvector:pg16` | Training store |
 | Qdrant | `qdrant/qdrant:latest` | RAG vector store ([ADR](decisions/rag-db-selection.md)) |
-| llamacpp | `ghcr.io/ggerganov/llama.cpp:server` | LLM inference |
-| llamacpp-embeddings | `ghcr.io/ggerganov/llama.cpp:server` | Qwen3-Embedding-8B (4096-dim) ([ADR](decisions/encoder-selection.md)) |
+| Ollama | `ollama/ollama:latest` | LLM inference (Qwen3-32B) and embeddings (Qwen3-Embedding-8B, 4096-dim) ([ADR](decisions/encoder-selection.md)) |
 
 ## Data Flow
 
@@ -55,7 +54,7 @@ External source
   -> requests.context
   -> context-builder (XREVRANGE lookback, RAG queries, render prompt)
   -> packages.ready
-  -> llm-gateway (llamacpp invocation, tool loop)
+  -> llm-gateway (Ollama invocation, tool loop)
   -> [feedback tools] -> labels.write -> training-service
   -> [domain tools]   -> actions.{stream_id} -> stream-ingestion (execute)
   -> [goal updates]   -> requests.goal_update -> orchestrator -> encoder -> ssm-worker
@@ -78,7 +77,7 @@ LLM calls update_goal()
 
 ### Session history summarization (background)
 
-The gateway **dual-publishes** each post-invocation exchange to the per-activity stream `events.exchange.{activity_id}` and to the centralized stream `exchanges.all`. The **rag-service** consumes `exchanges.all`, appends the raw exchange to the Redis list `exchanges:{activity_id}`, and sets `summarize_pending:{activity_id}` when a summarize run should run (deduplicating overlapping triggers). The **llm-gateway** consumes `requests.summarize`, calls llamacpp, and publishes `results.summarize`. The **rag-service** consumes `results.summarize`, writes the compressed narrative to `history:{activity_id}`, and clears the pending flag as appropriate. **Context assembly** (`get_history` and related queries) returns **real** compressed history from `history:{activity_id}` **plus** recent exchanges not yet folded into a summary, so the context builder sees a coherent tail of the session.
+The gateway **dual-publishes** each post-invocation exchange to the per-activity stream `events.exchange.{activity_id}` and to the centralized stream `exchanges.all`. The **rag-service** consumes `exchanges.all`, appends the raw exchange to the Redis list `exchanges:{activity_id}`, and sets `summarize_pending:{activity_id}` when a summarize run should run (deduplicating overlapping triggers). The **llm-gateway** consumes `requests.summarize`, calls Ollama, and publishes `results.summarize`. The **rag-service** consumes `results.summarize`, writes the compressed narrative to `history:{activity_id}`, and clears the pending flag as appropriate. **Context assembly** (`get_history` and related queries) returns **real** compressed history from `history:{activity_id}` **plus** recent exchanges not yet folded into a summary, so the context builder sees a coherent tail of the session.
 
 ## Key Architectural Decisions
 
@@ -129,5 +128,5 @@ These constraints are preserved across all implementation decisions (from spec S
 
 - [RAG database: Qdrant](decisions/rag-db-selection.md)
 - [SSM model: minimal linear SSM (Option A)](decisions/ssm-architecture.md)
-- [Encoder model: Qwen3-Embedding-8B via llamacpp](decisions/encoder-selection.md)
+- [Encoder model: Qwen3-Embedding-8B via Ollama](decisions/encoder-selection.md)
 - [Training approach: shared SSM crate and gradient computation](decisions/training-approach.md)

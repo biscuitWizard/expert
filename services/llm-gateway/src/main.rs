@@ -1,4 +1,4 @@
-mod llamacpp;
+mod ollama;
 mod tools;
 
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -12,7 +12,7 @@ use expert_redis::{StreamConsumer, StreamProducer};
 use expert_types::context::{ActivityExchange, ContextPackage, Episode, Exchange, ToolCall};
 use expert_types::signals::{SummarizeRequest, SummarizeResult};
 
-use llamacpp::{LlamaCppClient, LlmClient};
+use ollama::{LlmClient, OllamaClient};
 use tools::ToolRouter;
 
 #[tokio::main]
@@ -28,7 +28,7 @@ async fn main() -> Result<()> {
     {
         let conn = conn.clone();
         let mut sum_producer = producer.clone();
-        let client = LlamaCppClient::new(&config.llamacpp_url);
+        let client = OllamaClient::new(&config.ollama_url, &config.llm_model);
         tokio::spawn(async move {
             if let Err(e) = run_summarize_consumer(conn, &client, &mut sum_producer).await {
                 error!(error = %e, "summarize consumer exited");
@@ -45,7 +45,7 @@ async fn main() -> Result<()> {
     )
     .await?;
 
-    let client = LlamaCppClient::new(&config.llamacpp_url);
+    let client = OllamaClient::new(&config.ollama_url, &config.llm_model);
     let mut producer = producer;
 
     loop {
@@ -129,7 +129,7 @@ async fn invoke_llm(
 ) -> Result<()> {
     let mut router = ToolRouter::new(package, config.llm_max_labels_per_invocation);
 
-    // Build tool definitions for llamacpp
+    // Build tool definitions for the LLM
     let tools_json = tools::build_tools_json(&package.tool_definitions);
 
     // Initial LLM call

@@ -51,7 +51,7 @@ The assignment table maps `activity_id` to `worker_id` and is stored in Redis. C
 ## 4. Fire queue and backpressure
 
 - **Per-activity queue**: Bounded with depth 1: at most one pending fire per activity; a newer fire replaces an older pending entry when the activity is already queued (coalescing / last-write-wins at the fire boundary).
-- **Global queue**: Bounded to twice the configured **llamacpp** concurrency slot count (or the system's equivalent LLM concurrency limit). When full, admission policy applies (reject or drop according to configuration).
+- **Global queue**: Bounded to twice the configured **Ollama** concurrency slot count (or the system's equivalent LLM concurrency limit). When full, admission policy applies (reject or drop according to configuration).
 - **Stale signals**: Fire signals older than a configurable TTL (default 30 seconds) are dropped on admission to avoid executing on obsolete events.
 - **Ordering**: FIFO among admitted signals, with optional prioritization by goal hierarchy level (higher-priority goals may be ordered ahead when multiple activities compete for global slots).
 

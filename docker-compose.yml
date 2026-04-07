@@ -26,32 +26,13 @@ services:
     volumes:
       - qdrant-data:/qdrant/storage
 
-  llamacpp:
-    image: ghcr.io/ggerganov/llama.cpp:server
+  ollama:
+    image: ollama/ollama:latest
     ports:
-      - "8080:8080"
+      - "11434:11434"
     volumes:
-      - ./models:/models
-    command: >
-      --model /models/model.gguf
-      --ctx-size 8192
-      --n-gpu-layers 99
-      --host 0.0.0.0
-      --port 8080
-
-  llamacpp-embeddings:
-    image: ghcr.io/ggerganov/llama.cpp:server
-    ports:
-      - "8081:8081"
-    volumes:
-      - ./models:/models
-    command: >
-      --model /models/qwen3-embedding-8b.gguf
-      --ctx-size 512
-      --n-gpu-layers 99
-      --host 0.0.0.0
-      --port 8081
-      --embedding
+      - ollama-data:/root/.ollama
+    restart: unless-stopped
 
   # --- Expert services (build from workspace) ---
 
@@ -65,8 +46,10 @@ services:
     environment:
       REDIS_URL: redis://redis:6379
       QDRANT_URL: http://qdrant:6334
-      LLAMACPP_URL: http://llamacpp:8080
-      LLAMACPP_EMBEDDINGS_URL: http://llamacpp-embeddings:8081
+      OLLAMA_URL: http://ollama:11434
+      OLLAMA_EMBEDDINGS_URL: http://ollama:11434
+      LLM_MODEL: qwen3:32b
+      EMBEDDINGS_MODEL: qwen3-embedding:8b
       DATABASE_URL: postgres://expert:expert_dev@postgres:5432/expert_training
     depends_on:
       - redis
@@ -78,11 +61,12 @@ services:
         SERVICE: encoder
     environment:
       REDIS_URL: redis://redis:6379
-      LLAMACPP_EMBEDDINGS_URL: http://llamacpp-embeddings:8081
-      STREAM_ID: stdin-01
+      OLLAMA_EMBEDDINGS_URL: http://ollama:11434
+      EMBEDDINGS_MODEL: qwen3-embedding:8b
+      STREAM_ID: discord
     depends_on:
       - redis
-      - llamacpp-embeddings
+      - ollama
 
   ssm-worker:
     build:
@@ -113,10 +97,11 @@ services:
         SERVICE: llm-gateway
     environment:
       REDIS_URL: redis://redis:6379
-      LLAMACPP_URL: http://llamacpp:8080
+      OLLAMA_URL: http://ollama:11434
+      LLM_MODEL: qwen3:32b
     depends_on:
       - redis
-      - llamacpp
+      - ollama
 
   rag-service:
     build:
@@ -167,3 +152,4 @@ volumes:
   redis-data:
   pg-data:
   qdrant-data:
+  ollama-data:

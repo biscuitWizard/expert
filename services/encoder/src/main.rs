@@ -12,34 +12,38 @@ use expert_redis::{StreamConsumer, StreamProducer};
 use expert_types::event::Event;
 use expert_types::signals::{EncodeRequest, EncodeResult};
 
-// ---------- llamacpp embedding client ----------
+// ---------- Ollama embedding client ----------
 
 #[derive(Serialize)]
-struct EmbeddingApiRequest {
-    content: Vec<String>,
+struct OllamaEmbedRequest {
+    model: String,
+    input: Vec<String>,
 }
 
 #[derive(Deserialize)]
-struct EmbeddingApiResponseItem {
-    embedding: Vec<f32>,
+struct OllamaEmbedResponse {
+    embeddings: Vec<Vec<f32>>,
 }
 
-struct LlamaCppModel {
+struct OllamaEmbedder {
     client: reqwest::Client,
     url: String,
+    model: String,
 }
 
-impl LlamaCppModel {
-    fn new(base_url: &str) -> Self {
+impl OllamaEmbedder {
+    fn new(base_url: &str, model: &str) -> Self {
         Self {
             client: reqwest::Client::new(),
-            url: format!("{}/embedding", base_url.trim_end_matches('/')),
+            url: format!("{}/api/embed", base_url.trim_end_matches('/')),
+            model: model.to_string(),
         }
     }
 
     async fn embed(&self, texts: &[String]) -> Result<Vec<Vec<f32>>> {
-        let req = EmbeddingApiRequest {
-            content: texts.to_vec(),
+        let req = OllamaEmbedRequest {
+            model: self.model.clone(),
+            input: texts.to_vec(),
         };
         let resp = self
             .client
@@ -49,8 +53,8 @@ impl LlamaCppModel {
             .await?
             .error_for_status()?;
 
-        let items: Vec<EmbeddingApiResponseItem> = resp.json().await?;
-        Ok(items.into_iter().map(|i| i.embedding).collect())
+        let result: OllamaEmbedResponse = resp.json().await?;
+        Ok(result.embeddings)
     }
 }
 
@@ -67,7 +71,7 @@ async fn main() -> Result<()> {
     let config = Config::from_env();
     info!("starting encoder service");
 
-    let model = LlamaCppModel::new(&config.llamacpp_embeddings_url);
+    let model = OllamaEmbedder::new(&config.ollama_embeddings_url, &config.embeddings_model);
     let conn = expert_redis::connect(&config.redis_url).await?;
     let mut producer = StreamProducer::new(conn.clone(), config.stream_maxlen);
 

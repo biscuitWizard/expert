@@ -18,7 +18,7 @@ The two streams share the same embedding pipeline and model backend; routing dif
 
 ## 2. Model abstraction
 
-Embedding backends are abstracted behind a single trait so deployment can choose ONNX, llama.cpp, or an external API without changing stream logic.
+Embedding backends are abstracted behind a single trait so deployment can choose Ollama, ONNX, or an external API without changing stream logic.
 
 ```rust
 #[async_trait]
@@ -28,13 +28,13 @@ pub trait EmbeddingModel: Send + Sync {
 }
 ```
 
-**Selected implementation: `LlamaCppModel`**
+**Selected implementation: `OllamaEmbedder`**
 
-The encoder uses a dedicated llamacpp instance running **Qwen3-Embedding-8B** (see [encoder selection ADR](../../docs/decisions/encoder-selection.md)). The trait boundary is preserved for future model swaps.
+The encoder uses Ollama running **Qwen3-Embedding-8B** (see [encoder selection ADR](../../docs/decisions/encoder-selection.md)). The trait boundary is preserved for future model swaps.
 
 | Type | Backend | Status |
 |------|---------|--------|
-| `LlamaCppModel` | llamacpp-embeddings HTTP `/embedding` endpoint (Qwen3-Embedding-8B) | **Active** |
+| `OllamaEmbedder` | Ollama `/api/embed` endpoint (Qwen3-Embedding-8B) | **Active** |
 | `OnnxModel` | Local ONNX Runtime | Reserved for future lightweight models |
 | `ApiModel` | External HTTP embedding API | Reserved for external providers |
 
@@ -74,7 +74,7 @@ The encoder publishes an `EncodeResult` (or equivalent struct) containing at lea
 - `request_id` — Correlates with the originating request.
 - `embedding` — The resulting vector.
 
-Consumers of `results.encode` use `request_id` for correlation with the caller’s pending work.
+Consumers of `results.encode` use `request_id` for correlation with the caller's pending work.
 
 ## 6. Domain agnosticism
 
