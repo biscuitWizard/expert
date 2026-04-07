@@ -19,6 +19,15 @@ pub struct FireSignal {
     pub timestamp: u64,
 }
 
+/// Bot identity resolved at adapter bootstrap (username, platform user ID).
+/// Plumbed through orchestrator -> context-builder so the LLM knows who "it" is.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BotIdentity {
+    pub username: String,
+    pub user_id: String,
+    pub display_name: Option<String>,
+}
+
 /// Request from orchestrator to context-builder to assemble a context package.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AssembleRequest {
@@ -29,6 +38,9 @@ pub struct AssembleRequest {
     pub goal_tree: Vec<crate::goal::Goal>,
     /// Tool definitions for this activity's LLM session.
     pub tool_definitions: Vec<ToolDefinition>,
+    /// Identity of the bot user on the source platform.
+    #[serde(default)]
+    pub bot_identity: Option<BotIdentity>,
 }
 
 /// A tool the LLM can call. Feedback tools are always present;

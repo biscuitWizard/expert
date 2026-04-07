@@ -77,6 +77,7 @@ pub fn fake_assemble_request(activity_id: &str, stream_id: &str) -> AssembleRequ
             parameters_schema: serde_json::json!({"type": "object"}),
             is_domain_tool: false,
         }],
+        bot_identity: None,
     }
 }
 

@@ -12,7 +12,7 @@ use tracing::{error, info};
 use expert_redis::names;
 use expert_types::event_filter::EventFilter;
 use expert_types::goal::{Goal, GoalAggregation};
-use expert_types::signals::{EncodeRequest, EncodeResult, ToolDefinition};
+use expert_types::signals::{BotIdentity, EncodeRequest, EncodeResult, ToolDefinition};
 
 use crate::AppState;
 
@@ -42,6 +42,8 @@ struct CreateActivityRequest {
     tool_definitions: Vec<ToolDefinition>,
     #[serde(default)]
     event_filter: EventFilter,
+    #[serde(default)]
+    bot_identity: Option<BotIdentity>,
 }
 
 #[derive(Deserialize)]
@@ -151,6 +153,7 @@ async fn create_activity(
             goals.clone(),
             all_tools,
             req.event_filter.clone(),
+            req.bot_identity.clone(),
             MVP_WORKER_ID.to_string(),
         );
 
@@ -467,6 +470,23 @@ fn feedback_tool_definitions() -> Vec<ToolDefinition> {
                     }
                 },
                 "required": ["filter"]
+            }),
+            is_domain_tool: false,
+        },
+        ToolDefinition {
+            name: "update_self_knowledge".to_string(),
+            description: "Record a piece of self-knowledge about yourself. Use this to note preferences, capabilities, reflections, or personality traits you discover about yourself through interactions. This builds your persistent identity over time.".to_string(),
+            parameters_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "content": {"type": "string", "description": "The self-knowledge statement to record"},
+                    "category": {
+                        "type": "string",
+                        "enum": ["preference", "capability", "reflection"],
+                        "description": "Category of self-knowledge: preference (likes/dislikes), capability (skills learned), or reflection (self-observations)"
+                    }
+                },
+                "required": ["content", "category"]
             }),
             is_domain_tool: false,
         },

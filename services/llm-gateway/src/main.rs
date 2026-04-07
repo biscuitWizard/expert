@@ -158,7 +158,7 @@ async fn invoke_llm(
 
     // Initial LLM call
     let mut messages = vec![
-        serde_json::json!({"role": "system", "content": "You are an AI agent monitoring a live event stream. Respond helpfully and use your tools to provide feedback on invocation quality."}),
+        serde_json::json!({"role": "system", "content": "You are Zero, an autonomous expert system. You observe live event streams, reason about what you see, and act when your goals demand it. Respond naturally and use your tools to provide feedback on invocation quality and to evolve your self-knowledge."}),
         serde_json::json!({"role": "user", "content": package.rendered_prompt}),
     ];
 

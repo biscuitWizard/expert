@@ -130,6 +130,7 @@ async fn handle_fire_signal(state: &AppState, signal: FireSignal, _ttl_ms: u64) 
         fire_signal: signal,
         goal_tree: activity.goals.clone(),
         tool_definitions: activity.tool_definitions.clone(),
+        bot_identity: activity.bot_identity.clone(),
     };
 
     drop(registry);

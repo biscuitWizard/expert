@@ -5,7 +5,7 @@ use tracing::{info, warn};
 
 use expert_redis::StreamProducer;
 use expert_redis::names;
-use expert_types::context::ContextPackage;
+use expert_types::context::{ContextPackage, SelfKnowledgeNode};
 use expert_types::event_filter::EventFilter;
 use expert_types::signals::{FilterUpdateRequest, GoalUpdateRequest, ToolDefinition};
 use expert_types::training::{Label, LabelSource, TrainingExample};
@@ -50,6 +50,7 @@ impl<'a> ToolRouter<'a> {
             "add_goal" => self.handle_add_goal(arguments, producer).await,
             "set_threshold_hint" => self.handle_threshold_hint(arguments, producer).await,
             "update_event_filter" => self.handle_update_event_filter(arguments, producer).await,
+            "update_self_knowledge" => self.handle_update_self_knowledge(arguments, producer).await,
             _ => {
                 self.handle_domain_tool(tool_name, arguments, producer)
                     .await
@@ -356,6 +357,48 @@ impl<'a> ToolRouter<'a> {
             "update_event_filter() submitted"
         );
         serde_json::json!({"status": "submitted"})
+    }
+
+    async fn handle_update_self_knowledge(
+        &mut self,
+        arguments: &Value,
+        producer: &mut StreamProducer,
+    ) -> Value {
+        let content = match arguments.get("content").and_then(|v| v.as_str()) {
+            Some(c) if !c.is_empty() => c.to_string(),
+            _ => return serde_json::json!({"error": "missing or empty 'content' argument"}),
+        };
+
+        let category = arguments
+            .get("category")
+            .and_then(|v| v.as_str())
+            .unwrap_or("reflection")
+            .to_string();
+
+        let valid_categories = ["core_identity", "preference", "capability", "reflection"];
+        if !valid_categories.contains(&category.as_str()) {
+            return serde_json::json!({
+                "error": format!("invalid category, must be one of: {}", valid_categories.join(", "))
+            });
+        }
+
+        let now = now_ms();
+        let node = SelfKnowledgeNode {
+            id: uuid::Uuid::new_v4().to_string(),
+            category: category.clone(),
+            content,
+            embedding: Vec::new(),
+            created_at: now,
+            updated_at: now,
+        };
+
+        if let Err(e) = producer.publish(names::SELF_KNOWLEDGE_WRITE, &node).await {
+            warn!(error = %e, "failed to publish self-knowledge update");
+            return serde_json::json!({"error": "failed to submit self-knowledge update"});
+        }
+
+        info!(category = %category, "update_self_knowledge() submitted");
+        serde_json::json!({"status": "submitted", "category": category, "id": node.id})
     }
 
     async fn handle_domain_tool(

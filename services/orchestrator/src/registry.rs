@@ -4,7 +4,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use expert_types::activity::{ActivityLifecycle, ActivityState};
 use expert_types::event_filter::EventFilter;
 use expert_types::goal::Goal;
-use expert_types::signals::{FireSignal, ToolDefinition};
+use expert_types::signals::{BotIdentity, FireSignal, ToolDefinition};
 
 /// In-memory registry of all activities. Persisted to Redis on mutation.
 pub struct ActivityRegistry {
@@ -16,6 +16,7 @@ pub struct ManagedActivity {
     pub goals: Vec<Goal>,
     pub tool_definitions: Vec<ToolDefinition>,
     pub event_filter: EventFilter,
+    pub bot_identity: Option<BotIdentity>,
     pub worker_id: String,
     /// Pending fire signal (depth-1 queue per activity).
     pub pending_fire: Option<PendingFire>,
@@ -41,6 +42,7 @@ impl ActivityRegistry {
         goals: Vec<Goal>,
         tool_definitions: Vec<ToolDefinition>,
         event_filter: EventFilter,
+        bot_identity: Option<BotIdentity>,
         worker_id: String,
     ) -> &ManagedActivity {
         let now = now_ms();
@@ -82,6 +84,7 @@ impl ActivityRegistry {
             goals,
             tool_definitions,
             event_filter,
+            bot_identity,
             worker_id,
             pending_fire: None,
         };
@@ -143,6 +146,7 @@ mod tests {
             goals,
             Vec::new(),
             EventFilter::All,
+            None,
             "w-1".into(),
         );
         assert!(reg.get("act-1").is_some());
@@ -161,6 +165,7 @@ mod tests {
             vec![make_goal("x", 4)],
             Vec::new(),
             EventFilter::All,
+            None,
             "w".into(),
         );
         reg.create_activity(
@@ -170,6 +175,7 @@ mod tests {
             vec![make_goal("y", 4)],
             Vec::new(),
             EventFilter::All,
+            None,
             "w".into(),
         );
         assert_eq!(reg.list().len(), 2);
@@ -185,6 +191,7 @@ mod tests {
             vec![make_goal("a", 4)],
             Vec::new(),
             EventFilter::All,
+            None,
             "w".into(),
         );
         let removed = reg.remove("act-1");
@@ -210,6 +217,7 @@ mod tests {
             goals,
             Vec::new(),
             EventFilter::All,
+            None,
             "w".into(),
         );
         let managed = reg.get("act-1").unwrap();
@@ -228,6 +236,7 @@ mod tests {
             vec![make_goal("a", 4)],
             Vec::new(),
             EventFilter::All,
+            None,
             "w".into(),
         );
         let managed = reg.get("act-1").unwrap();

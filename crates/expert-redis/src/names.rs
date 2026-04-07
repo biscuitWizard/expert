@@ -41,6 +41,7 @@ pub const REQUESTS_FEWSHOT: &str = "requests.fewshot";
 pub const RESULTS_FEWSHOT: &str = "results.fewshot";
 pub const REQUESTS_FILTER_UPDATE: &str = "requests.filter_update";
 pub const SIGNALS_INVOCATION_COMPLETE: &str = "signals.invocation_complete";
+pub const SELF_KNOWLEDGE_WRITE: &str = "self_knowledge.write";
 pub const LOGS_SERVICE: &str = "logs.service";
 
 /// Redis key patterns for state store.
@@ -144,6 +145,7 @@ mod tests {
         assert!(!RESULTS_FEWSHOT.is_empty());
         assert!(!REQUESTS_FILTER_UPDATE.is_empty());
         assert!(!SIGNALS_INVOCATION_COMPLETE.is_empty());
+        assert!(!SELF_KNOWLEDGE_WRITE.is_empty());
     }
 
     #[test]
@@ -170,6 +172,7 @@ mod tests {
             RESULTS_FEWSHOT,
             REQUESTS_FILTER_UPDATE,
             SIGNALS_INVOCATION_COMPLETE,
+            SELF_KNOWLEDGE_WRITE,
         ] {
             assert!(name.contains('.'), "{name} should use dotted namespace");
         }

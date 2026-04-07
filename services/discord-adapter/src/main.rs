@@ -48,7 +48,18 @@ async fn main() -> Result<()> {
     info!(self_user_id, "resolved self user id");
 
     // Bootstrap activity via orchestrator
-    let activity_id = bootstrap_activity(&config, &stream_id).await?;
+    let display_name = self_user["global_name"]
+        .as_str()
+        .or_else(|| self_user["username"].as_str())
+        .map(|s| s.to_string());
+    let activity_id = bootstrap_activity(
+        &config,
+        &stream_id,
+        &username,
+        &self_user_id,
+        display_name.as_deref(),
+    )
+    .await?;
     info!(activity_id, "activity bootstrapped");
 
     // Spawn action consumer
@@ -88,7 +99,13 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-async fn bootstrap_activity(config: &Config, stream_id: &str) -> Result<String> {
+async fn bootstrap_activity(
+    config: &Config,
+    stream_id: &str,
+    bot_username: &str,
+    bot_user_id: &str,
+    bot_display_name: Option<&str>,
+) -> Result<String> {
     let tool_defs = tools::discord_tool_definitions();
     let client = reqwest::Client::new();
 
@@ -106,6 +123,11 @@ async fn bootstrap_activity(config: &Config, stream_id: &str) -> Result<String> 
             }
         ],
         "tool_definitions": tool_defs,
+        "bot_identity": {
+            "username": bot_username,
+            "user_id": bot_user_id,
+            "display_name": bot_display_name,
+        },
     });
 
     let url = format!("{}/activities", config.orchestrator_url);

@@ -7,7 +7,7 @@ use tracing::{error, info, warn};
 use expert_config::Config;
 use expert_redis::names;
 use expert_redis::{ServiceLogger, StreamConsumer, StreamProducer};
-use expert_types::context::{ContextPackage, Episode, Exchange};
+use expert_types::context::{ContextPackage, Episode, Exchange, SelfKnowledgeNode};
 use expert_types::event::Event;
 use expert_types::signals::AssembleRequest;
 
@@ -32,6 +32,8 @@ struct RagResult {
     exchanges: Vec<Exchange>,
     #[serde(default)]
     compressed_history: Option<String>,
+    #[serde(default)]
+    self_knowledge: Vec<SelfKnowledgeNode>,
 }
 
 #[tokio::main]
@@ -141,7 +143,7 @@ async fn assemble(
     });
 
     // 2. RAG query for relevant episodes (with timeout)
-    let (retrieved_episodes, compressed_history, recent_exchanges) =
+    let (retrieved_episodes, compressed_history, recent_exchanges, self_knowledge) =
         query_rag(req, config, &trigger_event, rag_producer, conn).await;
 
     // 3. Render natural language prompt
@@ -152,6 +154,7 @@ async fn assemble(
         &retrieved_episodes,
         &compressed_history,
         &recent_exchanges,
+        &self_knowledge,
         config,
     );
 
@@ -180,7 +183,12 @@ async fn query_rag(
     trigger_event: &Event,
     rag_producer: &mut StreamProducer,
     conn: &mut redis::aio::MultiplexedConnection,
-) -> (Vec<Episode>, Option<String>, Vec<Exchange>) {
+) -> (
+    Vec<Episode>,
+    Option<String>,
+    Vec<Exchange>,
+    Vec<SelfKnowledgeNode>,
+) {
     let timeout_dur = Duration::from_millis(config.context_rag_timeout_ms);
 
     // Semantic search for relevant episodes
@@ -209,10 +217,22 @@ async fn query_rag(
         .publish(names::QUERIES_RAG, &history_query)
         .await;
 
+    // Self-knowledge query
+    let sk_id = uuid::Uuid::new_v4().to_string();
+    let sk_query = RagQuery {
+        request_id: sk_id.clone(),
+        query_type: "get_self_knowledge".to_string(),
+        embedding: trigger_event.embedding.clone(),
+        activity_id: None,
+        k: Some(3),
+    };
+    let _ = rag_producer.publish(names::QUERIES_RAG, &sk_query).await;
+
     // Wait for results with timeout
     let mut episodes = Vec::new();
     let mut compressed_history = None;
     let mut exchanges = Vec::new();
+    let mut self_knowledge = Vec::new();
 
     let mut result_consumer = match StreamConsumer::new(
         conn.clone(),
@@ -224,14 +244,15 @@ async fn query_rag(
     .await
     {
         Ok(c) => c,
-        Err(_) => return (episodes, compressed_history, exchanges),
+        Err(_) => return (episodes, compressed_history, exchanges, self_knowledge),
     };
 
     let deadline = tokio::time::Instant::now() + timeout_dur;
     let mut found_search = false;
     let mut found_history = false;
+    let mut found_sk = false;
 
-    while (!found_search || !found_history) && tokio::time::Instant::now() < deadline {
+    while (!found_search || !found_history || !found_sk) && tokio::time::Instant::now() < deadline {
         match tokio::time::timeout(
             deadline.saturating_duration_since(tokio::time::Instant::now()),
             result_consumer.consume::<RagResult>(),
@@ -247,13 +268,16 @@ async fn query_rag(
                     compressed_history = result.compressed_history;
                     exchanges = result.exchanges;
                     found_history = true;
+                } else if result.request_id == sk_id {
+                    self_knowledge = result.self_knowledge;
+                    found_sk = true;
                 }
             }
             _ => break,
         }
     }
 
-    (episodes, compressed_history, exchanges)
+    (episodes, compressed_history, exchanges, self_knowledge)
 }
 
 fn render_prompt(
@@ -263,14 +287,31 @@ fn render_prompt(
     episodes: &[Episode],
     compressed_history: &Option<String>,
     recent_exchanges: &[Exchange],
+    self_knowledge: &[SelfKnowledgeNode],
     config: &Config,
 ) -> String {
     let mut prompt = String::with_capacity(4096);
 
+    // === YOUR IDENTITY ===
+    prompt.push_str("=== YOUR IDENTITY ===\n");
+    if let Some(identity) = &req.bot_identity {
+        prompt.push_str(&format!(
+            "You are Zero (username={}, user_id={}).\n",
+            identity.username, identity.user_id
+        ));
+    } else {
+        prompt.push_str("You are Zero.\n");
+    }
+    prompt.push_str("Events where is_self=true are your own messages.\n");
+    for node in self_knowledge {
+        prompt.push_str(&format!("{}\n", node.content));
+    }
+    prompt.push('\n');
+
     // === ACTIVITY CONTEXT ===
     prompt.push_str("=== ACTIVITY CONTEXT ===\n");
     prompt.push_str(&format!(
-        "You are monitoring a live event stream (stream: {}, domain: {}).\n",
+        "You are monitoring a live event stream (stream: {}, activity: {}).\n",
         req.stream_id, req.activity_id
     ));
     prompt.push_str(

@@ -66,6 +66,21 @@ pub struct ActivityExchange {
     pub exchange: Exchange,
 }
 
+/// A node in the self-knowledge graph stored in Qdrant. Represents one piece
+/// of Zero's understanding of itself -- core identity, preferences, capabilities,
+/// or reflections. Retrieved via semantic search against the current context.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SelfKnowledgeNode {
+    pub id: String,
+    /// One of: "core_identity", "preference", "capability", "reflection".
+    pub category: String,
+    pub content: String,
+    #[serde(default)]
+    pub embedding: Vec<f32>,
+    pub created_at: u64,
+    pub updated_at: u64,
+}
+
 /// Server-side context assembly object. The `rendered_prompt` is what
 /// the LLM receives; all other fields are retained server-side for
 /// tool call resolution (e.g. recall() needs access to event embeddings).
