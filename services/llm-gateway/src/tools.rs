@@ -49,9 +49,8 @@ impl<'a> ToolRouter<'a> {
             "add_goal" => self.handle_add_goal(arguments, producer).await,
             "set_threshold_hint" => self.handle_threshold_hint(arguments, producer).await,
             _ => {
-                // Domain tool -- log but don't execute for MVP
-                info!(tool = tool_name, "domain tool call (not executing in MVP)");
-                serde_json::json!({"status": "acknowledged", "note": "domain tool execution not available in MVP"})
+                self.handle_domain_tool(tool_name, arguments, producer)
+                    .await
             }
         }
     }
@@ -314,6 +313,32 @@ impl<'a> ToolRouter<'a> {
             direction, magnitude, "set_threshold_hint() submitted"
         );
         serde_json::json!({"status": "submitted"})
+    }
+
+    async fn handle_domain_tool(
+        &mut self,
+        tool_name: &str,
+        arguments: &Value,
+        producer: &mut StreamProducer,
+    ) -> Value {
+        let stream_id = &self.package.trigger_event.stream_id;
+        let action_stream = names::actions(stream_id);
+        let invocation_id = uuid::Uuid::new_v4().to_string();
+
+        let payload = serde_json::json!({
+            "tool_name": tool_name,
+            "arguments": arguments,
+            "invocation_id": invocation_id,
+        });
+
+        info!(tool = tool_name, stream = %action_stream, "publishing domain tool call");
+
+        if let Err(e) = producer.publish(&action_stream, &payload).await {
+            warn!(error = %e, tool = tool_name, "failed to publish domain tool action");
+            return serde_json::json!({"error": "failed to dispatch domain tool action"});
+        }
+
+        serde_json::json!({"status": "dispatched", "tool": tool_name, "invocation_id": invocation_id})
     }
 }
 

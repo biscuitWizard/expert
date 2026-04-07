@@ -145,6 +145,24 @@ services:
   # stream-ingestion is interactive (reads stdin), run manually:
   # docker compose run --rm stream-ingestion
 
+  discord-adapter:
+    build:
+      context: .
+      args:
+        SERVICE: discord-adapter
+    environment:
+      REDIS_URL: redis://redis:6379
+      ORCHESTRATOR_URL: http://orchestrator:3000
+      DISCORD_TOKEN: ${DISCORD_TOKEN}
+      DISCORD_EMAIL: ${DISCORD_EMAIL:-}
+      DISCORD_PASSWORD: ${DISCORD_PASSWORD:-}
+      DISCORD_USERNAME: ${DISCORD_USERNAME}
+      DISCORD_GUILD_IDS: ${DISCORD_GUILD_IDS:-}
+      STREAM_ID: discord
+    depends_on:
+      - redis
+      - orchestrator
+
 volumes:
   redis-data:
   pg-data:
