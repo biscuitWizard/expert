@@ -122,10 +122,20 @@ mod tests {
     #[test]
     fn test_constants_dotted_namespace() {
         for name in [
-            SIGNALS_FIRE, REQUESTS_CONTEXT, REQUESTS_ENCODE, RESULTS_ENCODE,
-            QUERIES_RAG, RESULTS_RAG, REQUESTS_SUMMARIZE, RESULTS_SUMMARIZE,
-            REQUESTS_GOAL_UPDATE, PACKAGES_READY, LABELS_WRITE, EPISODES_WRITE,
-            GOALS_WRITE, CHECKPOINTS_AVAILABLE,
+            SIGNALS_FIRE,
+            REQUESTS_CONTEXT,
+            REQUESTS_ENCODE,
+            RESULTS_ENCODE,
+            QUERIES_RAG,
+            RESULTS_RAG,
+            REQUESTS_SUMMARIZE,
+            RESULTS_SUMMARIZE,
+            REQUESTS_GOAL_UPDATE,
+            PACKAGES_READY,
+            LABELS_WRITE,
+            EPISODES_WRITE,
+            GOALS_WRITE,
+            CHECKPOINTS_AVAILABLE,
         ] {
             assert!(name.contains('.'), "{name} should use dotted namespace");
         }

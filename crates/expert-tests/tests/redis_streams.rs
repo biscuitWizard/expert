@@ -14,11 +14,19 @@ async fn test_publish_and_consume() {
     assert!(!id.is_empty());
 
     let mut consumer = StreamConsumer::new(
-        conn.clone(), stream.clone(),
-        "grp".to_string(), "c0".to_string(), 1000,
-    ).await.unwrap();
+        conn.clone(),
+        stream.clone(),
+        "grp".to_string(),
+        "c0".to_string(),
+        1000,
+    )
+    .await
+    .unwrap();
 
-    let result = consumer.consume::<expert_types::event::Event>().await.unwrap();
+    let result = consumer
+        .consume::<expert_types::event::Event>()
+        .await
+        .unwrap();
     assert!(result.is_some());
     let (entry_id, msg) = result.unwrap();
     assert_eq!(msg.id, event.id);
@@ -33,10 +41,19 @@ async fn test_consume_timeout() {
 
     let stream = unique_stream("test.empty");
     let mut consumer = StreamConsumer::new(
-        conn.clone(), stream, "grp".to_string(), "c0".to_string(), 100,
-    ).await.unwrap();
+        conn.clone(),
+        stream,
+        "grp".to_string(),
+        "c0".to_string(),
+        100,
+    )
+    .await
+    .unwrap();
 
-    let result = consumer.consume::<expert_types::event::Event>().await.unwrap();
+    let result = consumer
+        .consume::<expert_types::event::Event>()
+        .await
+        .unwrap();
     assert!(result.is_none());
 }
 
@@ -47,12 +64,23 @@ async fn test_consumer_group_idempotent() {
 
     let stream = unique_stream("test.idem");
     let _c1 = StreamConsumer::new(
-        conn.clone(), stream.clone(), "grp".to_string(), "c0".to_string(), 100,
-    ).await.unwrap();
+        conn.clone(),
+        stream.clone(),
+        "grp".to_string(),
+        "c0".to_string(),
+        100,
+    )
+    .await
+    .unwrap();
 
     let c2 = StreamConsumer::new(
-        conn.clone(), stream, "grp".to_string(), "c1".to_string(), 100,
-    ).await;
+        conn.clone(),
+        stream,
+        "grp".to_string(),
+        "c1".to_string(),
+        100,
+    )
+    .await;
     assert!(c2.is_ok());
 }
 
@@ -90,21 +118,26 @@ async fn test_maxlen_trimming() {
     flush_redis(&mut conn).await;
 
     let stream = unique_stream("test.maxlen");
-    let mut producer = StreamProducer::new(conn.clone(), 5);
+    let mut producer = StreamProducer::new(conn.clone(), 100);
 
-    for i in 0..20 {
+    for i in 0..400 {
         let mut event = fake_event("s1");
         event.sequence = i;
         producer.publish(&stream, &event).await.unwrap();
     }
 
     let all: Vec<(String, expert_types::event::Event)> =
-        expert_redis::streams::xrevrange(&mut conn, &stream, "+", "-", 100)
+        expert_redis::streams::xrevrange(&mut conn, &stream, "+", "-", 1000)
             .await
             .unwrap();
 
-    // MAXLEN ~ is approximate, but should be roughly capped
-    assert!(all.len() <= 10, "expected ~5 entries, got {}", all.len());
+    // MAXLEN ~ is approximate (trims per radix-tree node), so allow 2x headroom
+    assert!(all.len() <= 200, "expected ~100 entries, got {}", all.len());
+    assert!(
+        all.len() >= 50,
+        "trimming removed too aggressively: {}",
+        all.len()
+    );
 }
 
 #[tokio::test]
@@ -120,10 +153,19 @@ async fn test_publish_multiple_types() {
     assert!(!id.is_empty());
 
     let mut consumer = StreamConsumer::new(
-        conn.clone(), stream, "grp".to_string(), "c0".to_string(), 1000,
-    ).await.unwrap();
+        conn.clone(),
+        stream,
+        "grp".to_string(),
+        "c0".to_string(),
+        1000,
+    )
+    .await
+    .unwrap();
 
-    let result = consumer.consume::<expert_types::signals::FireSignal>().await.unwrap();
+    let result = consumer
+        .consume::<expert_types::signals::FireSignal>()
+        .await
+        .unwrap();
     assert!(result.is_some());
     let (_, msg) = result.unwrap();
     assert_eq!(msg.activity_id, "act-1");

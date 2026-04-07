@@ -1,6 +1,6 @@
 use redis::aio::MultiplexedConnection;
 use redis::{AsyncCommands, RedisResult};
-use serde::{de::DeserializeOwned, Serialize};
+use serde::{Serialize, de::DeserializeOwned};
 
 /// Key-value state store backed by Redis. Used for activity state
 /// serialization, worker assignments, fire queue entries, and sequence counters.

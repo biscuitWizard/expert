@@ -46,10 +46,7 @@ impl Config {
                 "postgres://expert:expert_dev@127.0.0.1:5432/expert_training",
             ),
             llamacpp_url: env_or("LLAMACPP_URL", "http://127.0.0.1:8080"),
-            llamacpp_embeddings_url: env_or(
-                "LLAMACPP_EMBEDDINGS_URL",
-                "http://127.0.0.1:8081",
-            ),
+            llamacpp_embeddings_url: env_or("LLAMACPP_EMBEDDINGS_URL", "http://127.0.0.1:8081"),
             orchestrator_url: env_or("ORCHESTRATOR_URL", "http://127.0.0.1:3000"),
 
             embedding_dim: env_parse("EMBEDDING_DIM", 4096),
@@ -75,8 +72,7 @@ impl Config {
 }
 
 pub fn init_tracing() {
-    let filter = EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| EnvFilter::new("info"));
+    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
     tracing_subscriber::fmt()
         .with_env_filter(filter)
         .with_target(true)
