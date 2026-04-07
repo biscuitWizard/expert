@@ -1,4 +1,4 @@
-/// Stream naming constants matching the schema in expert-redis README.
+//! Stream naming constants matching the schema in expert-redis README.
 
 pub fn events_raw(stream_id: &str) -> String {
     format!("events.raw.{stream_id}")

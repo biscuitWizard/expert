@@ -158,33 +158,32 @@ pub async fn xrevrange<T: DeserializeOwned>(
 
     let mut results = Vec::new();
     for entry_val in raw {
-        if let redis::Value::Array(parts) = entry_val {
-            if parts.len() >= 2 {
-                let id = match &parts[0] {
-                    redis::Value::BulkString(b) => String::from_utf8_lossy(b).to_string(),
-                    _ => continue,
-                };
-                if let redis::Value::Array(ref fields) = parts[1] {
-                    // Fields come as [key, value, key, value, ...]
-                    let mut i = 0;
-                    while i + 1 < fields.len() {
-                        let key = match &fields[i] {
-                            redis::Value::BulkString(b) => String::from_utf8_lossy(b).to_string(),
-                            _ => {
-                                i += 2;
-                                continue;
-                            }
-                        };
-                        if key == DATA_FIELD {
-                            if let redis::Value::BulkString(ref bytes) = fields[i + 1] {
-                                let json_str = String::from_utf8_lossy(bytes);
-                                if let Ok(msg) = serde_json::from_str::<T>(&json_str) {
-                                    results.push((id.clone(), msg));
-                                }
-                            }
+        if let redis::Value::Array(parts) = entry_val
+            && parts.len() >= 2
+        {
+            let id = match &parts[0] {
+                redis::Value::BulkString(b) => String::from_utf8_lossy(b).to_string(),
+                _ => continue,
+            };
+            if let redis::Value::Array(ref fields) = parts[1] {
+                let mut i = 0;
+                while i + 1 < fields.len() {
+                    let key = match &fields[i] {
+                        redis::Value::BulkString(b) => String::from_utf8_lossy(b).to_string(),
+                        _ => {
+                            i += 2;
+                            continue;
                         }
-                        i += 2;
+                    };
+                    if key == DATA_FIELD
+                        && let redis::Value::BulkString(ref bytes) = fields[i + 1]
+                    {
+                        let json_str = String::from_utf8_lossy(bytes);
+                        if let Ok(msg) = serde_json::from_str::<T>(&json_str) {
+                            results.push((id.clone(), msg));
+                        }
                     }
+                    i += 2;
                 }
             }
         }
