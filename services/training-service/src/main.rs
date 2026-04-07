@@ -1,13 +1,13 @@
 use std::time::Duration;
 
 use anyhow::Result;
-use sqlx::postgres::PgPoolOptions;
 use sqlx::PgPool;
+use sqlx::postgres::PgPoolOptions;
 use tracing::{error, info, warn};
 
 use expert_config::Config;
-use expert_redis::names;
 use expert_redis::StreamConsumer;
+use expert_redis::names;
 use expert_types::training::TrainingExample;
 
 #[tokio::main]

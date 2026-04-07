@@ -64,14 +64,7 @@ async fn main() -> Result<()> {
                     "assembling context package"
                 );
 
-                match assemble(
-                    &req,
-                    &config,
-                    &mut conn.clone(),
-                    &mut rag_producer,
-                )
-                .await
-                {
+                match assemble(&req, &config, &mut conn.clone(), &mut rag_producer).await {
                     Ok(package) => {
                         if let Err(e) = producer.publish(names::PACKAGES_READY, &package).await {
                             error!(error = %e, "failed to publish context package");
@@ -102,11 +95,7 @@ async fn assemble(
     // 1. XREVRANGE lookback for recent events
     let stream = names::events_embedded(&req.stream_id);
     let end = &req.fire_signal.trigger_event_seq;
-    let start = req
-        .fire_signal
-        .last_fired_seq
-        .as_deref()
-        .unwrap_or("0");
+    let start = req.fire_signal.last_fired_seq.as_deref().unwrap_or("0");
 
     let events: Vec<(String, Event)> = expert_redis::streams::xrevrange(
         conn,
@@ -122,18 +111,15 @@ async fn assemble(
     recent_events.reverse(); // Chronological order
 
     // Identify trigger event (last in the list or by sequence match)
-    let trigger_event = recent_events
-        .last()
-        .cloned()
-        .unwrap_or_else(|| Event {
-            id: String::new(),
-            stream_id: req.stream_id.clone(),
-            sequence: 0,
-            timestamp: 0,
-            raw: "[trigger event not found in lookback]".to_string(),
-            embedding: None,
-            metadata: Default::default(),
-        });
+    let trigger_event = recent_events.last().cloned().unwrap_or_else(|| Event {
+        id: String::new(),
+        stream_id: req.stream_id.clone(),
+        sequence: 0,
+        timestamp: 0,
+        raw: "[trigger event not found in lookback]".to_string(),
+        embedding: None,
+        metadata: Default::default(),
+    });
 
     // 2. RAG query for relevant episodes (with timeout)
     let (retrieved_episodes, compressed_history, recent_exchanges) =
@@ -152,7 +138,10 @@ async fn assemble(
 
     Ok(ContextPackage {
         activity_id: req.activity_id.clone(),
-        firing_goals: req.fire_signal.firing_goal_ids.iter()
+        firing_goals: req
+            .fire_signal
+            .firing_goal_ids
+            .iter()
             .filter_map(|gid| req.goal_tree.iter().find(|g| &g.id == gid).cloned())
             .collect(),
         trigger_event,
@@ -184,7 +173,9 @@ async fn query_rag(
         activity_id: Some(req.activity_id.clone()),
         k: Some(config.context_max_episodes),
     };
-    let _ = rag_producer.publish(names::QUERIES_RAG, &search_query).await;
+    let _ = rag_producer
+        .publish(names::QUERIES_RAG, &search_query)
+        .await;
 
     // History query
     let history_id = uuid::Uuid::new_v4().to_string();
@@ -195,7 +186,9 @@ async fn query_rag(
         activity_id: Some(req.activity_id.clone()),
         k: Some(config.context_max_exchanges),
     };
-    let _ = rag_producer.publish(names::QUERIES_RAG, &history_query).await;
+    let _ = rag_producer
+        .publish(names::QUERIES_RAG, &history_query)
+        .await;
 
     // Wait for results with timeout
     let mut episodes = Vec::new();
@@ -273,7 +266,10 @@ fn render_prompt(
         } else {
             ""
         };
-        prompt.push_str(&format!("- {}: {}{}\n", goal.name, goal.description, firing));
+        prompt.push_str(&format!(
+            "- {}: {}{}\n",
+            goal.name, goal.description, firing
+        ));
     }
     prompt.push('\n');
 

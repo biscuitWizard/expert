@@ -1,15 +1,15 @@
-use qdrant_client::qdrant::{
-    CreateCollectionBuilder, Distance, VectorParamsBuilder,
-};
-use qdrant_client::Qdrant;
 use expert_tests::*;
+use qdrant_client::Qdrant;
+use qdrant_client::qdrant::{CreateCollectionBuilder, Distance, VectorParamsBuilder};
 
 fn qdrant_url() -> String {
     std::env::var("QDRANT_URL").unwrap_or_else(|_| "http://127.0.0.1:6334".to_string())
 }
 
 async fn qdrant_client() -> Qdrant {
-    Qdrant::from_url(&qdrant_url()).build().expect("qdrant client failed")
+    Qdrant::from_url(&qdrant_url())
+        .build()
+        .expect("qdrant client failed")
 }
 
 async fn ensure_clean_collection(client: &Qdrant, name: &str, dim: u64) {
@@ -67,9 +67,10 @@ async fn test_episode_insert_and_search() {
     );
 
     client
-        .upsert_points(
-            qdrant_client::qdrant::UpsertPointsBuilder::new(&col_name, vec![point]),
-        )
+        .upsert_points(qdrant_client::qdrant::UpsertPointsBuilder::new(
+            &col_name,
+            vec![point],
+        ))
         .await
         .unwrap();
 
@@ -78,15 +79,21 @@ async fn test_episode_insert_and_search() {
 
     let results = client
         .search_points(
-            qdrant_client::qdrant::SearchPointsBuilder::new(&col_name, episode.embedding.clone(), 5)
-                .with_payload(true),
+            qdrant_client::qdrant::SearchPointsBuilder::new(
+                &col_name,
+                episode.embedding.clone(),
+                5,
+            )
+            .with_payload(true),
         )
         .await
         .unwrap();
 
     assert!(!results.result.is_empty());
     let first = &results.result[0];
-    let stored_activity_id = first.payload.get("activity_id")
+    let stored_activity_id = first
+        .payload
+        .get("activity_id")
         .and_then(|v| v.as_str())
         .map_or("", |v| v);
     assert_eq!(stored_activity_id, "act-test");
@@ -111,16 +118,14 @@ async fn test_goal_upsert() {
     .try_into()
     .unwrap();
 
-    let point = qdrant_client::qdrant::PointStruct::new(
-        goal.id.clone(),
-        goal.embedding.clone(),
-        payload,
-    );
+    let point =
+        qdrant_client::qdrant::PointStruct::new(goal.id.clone(), goal.embedding.clone(), payload);
 
     client
-        .upsert_points(
-            qdrant_client::qdrant::UpsertPointsBuilder::new(&col_name, vec![point.clone()]),
-        )
+        .upsert_points(qdrant_client::qdrant::UpsertPointsBuilder::new(
+            &col_name,
+            vec![point.clone()],
+        ))
         .await
         .unwrap();
 
@@ -140,9 +145,10 @@ async fn test_goal_upsert() {
     );
 
     client
-        .upsert_points(
-            qdrant_client::qdrant::UpsertPointsBuilder::new(&col_name, vec![updated_point]),
-        )
+        .upsert_points(qdrant_client::qdrant::UpsertPointsBuilder::new(
+            &col_name,
+            vec![updated_point],
+        ))
         .await
         .unwrap();
 
@@ -157,7 +163,9 @@ async fn test_goal_upsert() {
         .unwrap();
 
     assert_eq!(results.result.len(), 1, "upsert should not duplicate");
-    let desc = results.result[0].payload.get("description")
+    let desc = results.result[0]
+        .payload
+        .get("description")
         .and_then(|v| v.as_str())
         .map_or("", |v| v);
     assert_eq!(desc, "updated description");
@@ -175,8 +183,7 @@ async fn test_search_empty_collection() {
     let query = vec![0.5f32; dim as usize];
     let results = client
         .search_points(
-            qdrant_client::qdrant::SearchPointsBuilder::new(&col_name, query, 5)
-                .with_payload(true),
+            qdrant_client::qdrant::SearchPointsBuilder::new(&col_name, query, 5).with_payload(true),
         )
         .await
         .unwrap();

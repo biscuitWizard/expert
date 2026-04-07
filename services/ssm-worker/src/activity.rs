@@ -7,7 +7,7 @@ use expert_types::event::Event;
 use expert_types::goal::Goal;
 use expert_types::signals::FireSignal;
 
-use crate::features::{compute_features, FeatureState};
+use crate::features::{FeatureState, compute_features};
 use crate::ssm::{LinearSsm, SsmCore};
 
 const NUM_SCALAR_FEATURES: usize = 3; // drift, surprise, delta_t (silences are per-goal, handled dynamically)
@@ -39,12 +39,7 @@ pub struct ActivityInstance {
 }
 
 impl ActivityInstance {
-    pub fn new(
-        activity_id: String,
-        stream_id: String,
-        goals: Vec<Goal>,
-        config: &Config,
-    ) -> Self {
+    pub fn new(activity_id: String, stream_id: String, goals: Vec<Goal>, config: &Config) -> Self {
         let k = goals.len();
         let embedding_dim = config.embedding_dim;
         let hidden_dim = config.ssm_hidden_dim;

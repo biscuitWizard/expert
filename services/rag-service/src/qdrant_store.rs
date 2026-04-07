@@ -1,7 +1,7 @@
 use anyhow::Result;
 use qdrant_client::qdrant::{
-    CreateCollectionBuilder, Distance, PointStruct, SearchPointsBuilder,
-    UpsertPointsBuilder, VectorParamsBuilder,
+    CreateCollectionBuilder, Distance, PointStruct, SearchPointsBuilder, UpsertPointsBuilder,
+    VectorParamsBuilder,
 };
 use qdrant_client::{Payload, Qdrant};
 use serde_json::json;
@@ -59,11 +59,7 @@ impl QdrantStore {
         .try_into()
         .unwrap();
 
-        let point = PointStruct::new(
-            episode.id.clone(),
-            episode.embedding.clone(),
-            payload,
-        );
+        let point = PointStruct::new(episode.id.clone(), episode.embedding.clone(), payload);
 
         self.client
             .upsert_points(UpsertPointsBuilder::new(EPISODES_COLLECTION, vec![point]))
@@ -72,11 +68,7 @@ impl QdrantStore {
         Ok(())
     }
 
-    pub async fn search_episodes(
-        &self,
-        embedding: &[f32],
-        k: usize,
-    ) -> Result<Vec<Episode>> {
+    pub async fn search_episodes(&self, embedding: &[f32], k: usize) -> Result<Vec<Episode>> {
         if embedding.is_empty() {
             return Ok(Vec::new());
         }
@@ -101,12 +93,8 @@ impl QdrantStore {
                     .unwrap_or_default()
             };
 
-            let get_bool = |key: &str| -> bool {
-                payload
-                    .get(key)
-                    .and_then(|v| v.as_bool())
-                    .unwrap_or(false)
-            };
+            let get_bool =
+                |key: &str| -> bool { payload.get(key).and_then(|v| v.as_bool()).unwrap_or(false) };
 
             let get_i64 = |key: &str| -> u64 {
                 payload
@@ -118,9 +106,7 @@ impl QdrantStore {
 
             let id = match point.id {
                 Some(ref pid) => match pid.point_id_options {
-                    Some(qdrant_client::qdrant::point_id::PointIdOptions::Uuid(ref u)) => {
-                        u.clone()
-                    }
+                    Some(qdrant_client::qdrant::point_id::PointIdOptions::Uuid(ref u)) => u.clone(),
                     _ => String::new(),
                 },
                 None => String::new(),
@@ -166,11 +152,7 @@ impl QdrantStore {
         .try_into()
         .unwrap();
 
-        let point = PointStruct::new(
-            goal.id.clone(),
-            goal.embedding.clone(),
-            payload,
-        );
+        let point = PointStruct::new(goal.id.clone(), goal.embedding.clone(), payload);
 
         self.client
             .upsert_points(UpsertPointsBuilder::new(GOALS_COLLECTION, vec![point]))

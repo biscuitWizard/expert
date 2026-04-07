@@ -55,9 +55,7 @@ impl LinearSsm {
 
         // C: Xavier init
         let c_scale = (2.0 / (max_k + hidden_dim) as f32).sqrt();
-        let c = Array2::from_shape_fn((max_k, hidden_dim), |_| {
-            (rand_f32() - 0.5) * 2.0 * c_scale
-        });
+        let c = Array2::from_shape_fn((max_k, hidden_dim), |_| (rand_f32() - 0.5) * 2.0 * c_scale);
 
         // D: zero bias
         let d = Array1::zeros(max_k);

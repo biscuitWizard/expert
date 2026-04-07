@@ -1,10 +1,11 @@
-use sqlx::postgres::PgPoolOptions;
-use sqlx::PgPool;
 use expert_tests::*;
+use sqlx::PgPool;
+use sqlx::postgres::PgPoolOptions;
 
 fn database_url() -> String {
-    std::env::var("DATABASE_URL")
-        .unwrap_or_else(|_| "postgres://expert:expert_dev@127.0.0.1:5432/expert_training".to_string())
+    std::env::var("DATABASE_URL").unwrap_or_else(|_| {
+        "postgres://expert:expert_dev@127.0.0.1:5432/expert_training".to_string()
+    })
 }
 
 async fn pool() -> PgPool {
@@ -65,7 +66,10 @@ async fn cleanup(pool: &PgPool) {
         .ok();
 }
 
-async fn insert_example(pool: &PgPool, ex: &expert_types::training::TrainingExample) -> Result<(), sqlx::Error> {
+async fn insert_example(
+    pool: &PgPool,
+    ex: &expert_types::training::TrainingExample,
+) -> Result<(), sqlx::Error> {
     let label_str = serde_json::to_string(&ex.label).unwrap();
     let source_str = serde_json::to_string(&ex.label_source).unwrap();
     let goal_emb_json = serde_json::to_value(&ex.goal_embedding).unwrap();
@@ -122,13 +126,12 @@ async fn test_label_insert() {
     let example = fake_training_example();
     insert_example(&pool, &example).await.unwrap();
 
-    let row: (String, String) = sqlx::query_as(
-        "SELECT id, reason FROM training_examples WHERE id = $1",
-    )
-    .bind(&example.id)
-    .fetch_one(&pool)
-    .await
-    .unwrap();
+    let row: (String, String) =
+        sqlx::query_as("SELECT id, reason FROM training_examples WHERE id = $1")
+            .bind(&example.id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
 
     assert_eq!(row.0, example.id);
     assert_eq!(row.1, "test reason");
@@ -146,13 +149,11 @@ async fn test_duplicate_id_ignored() {
     insert_example(&pool, &example).await.unwrap();
     insert_example(&pool, &example).await.unwrap(); // should not error
 
-    let count: (i64,) = sqlx::query_as(
-        "SELECT COUNT(*) FROM training_examples WHERE id = $1",
-    )
-    .bind(&example.id)
-    .fetch_one(&pool)
-    .await
-    .unwrap();
+    let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM training_examples WHERE id = $1")
+        .bind(&example.id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
 
     assert_eq!(count.0, 1, "duplicate insert should be ignored");
 

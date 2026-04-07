@@ -5,11 +5,7 @@ pub fn cosine_similarity(a: ArrayView1<f32>, b: ArrayView1<f32>) -> f32 {
     let norm_a = a.dot(&a).sqrt();
     let norm_b = b.dot(&b).sqrt();
     let denom = norm_a * norm_b;
-    if denom < 1e-12 {
-        0.0
-    } else {
-        dot / denom
-    }
+    if denom < 1e-12 { 0.0 } else { dot / denom }
 }
 
 pub fn ema_update(old: f32, new: f32, alpha: f32) -> f32 {

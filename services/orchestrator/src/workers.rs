@@ -3,15 +3,15 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use tracing::{error, info, warn};
 
-use expert_redis::names;
 use expert_redis::StreamConsumer;
+use expert_redis::names;
 use expert_types::activity::ActivityLifecycle;
 use expert_types::signals::{
     AssembleRequest, EncodeRequest, EncodeResult, FireSignal, GoalUpdateRequest,
 };
 
-use crate::registry::PendingFire;
 use crate::AppState;
+use crate::registry::PendingFire;
 
 fn now_ms() -> u64 {
     SystemTime::now()
@@ -206,10 +206,7 @@ async fn handle_goal_update(state: &AppState, req: GoalUpdateRequest) {
 
     {
         let mut producer = state.producer.write().await;
-        if let Err(e) = producer
-            .publish(names::REQUESTS_ENCODE, &encode_req)
-            .await
-        {
+        if let Err(e) = producer.publish(names::REQUESTS_ENCODE, &encode_req).await {
             error!(error = %e, "failed to publish encode request for goal update");
             return;
         }

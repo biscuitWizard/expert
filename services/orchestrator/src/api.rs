@@ -81,7 +81,11 @@ async fn create_activity(
             let mut producer = state.producer.write().await;
             if let Err(e) = producer.publish(names::REQUESTS_ENCODE, &encode_req).await {
                 error!(error = %e, "failed to publish encode request");
-                return (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": "encoding failed"}))).into_response();
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(serde_json::json!({"error": "encoding failed"})),
+                )
+                    .into_response();
             }
         }
 
@@ -90,7 +94,11 @@ async fn create_activity(
             Some(emb) => emb,
             None => {
                 error!("timeout waiting for goal encoding");
-                return (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": "encoding timeout"}))).into_response();
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(serde_json::json!({"error": "encoding timeout"})),
+                )
+                    .into_response();
             }
         };
 
@@ -178,7 +186,11 @@ async fn create_activity(
     }
 
     info!(activity_id = %response.activity_id, "activity created");
-    (StatusCode::CREATED, Json(serde_json::to_value(response).unwrap())).into_response()
+    (
+        StatusCode::CREATED,
+        Json(serde_json::to_value(response).unwrap()),
+    )
+        .into_response()
 }
 
 async fn list_activities(State(state): State<Arc<AppState>>) -> impl IntoResponse {

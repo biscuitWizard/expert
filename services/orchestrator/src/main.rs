@@ -1,10 +1,10 @@
-mod registry;
 mod api;
+mod registry;
 mod workers;
 
+use anyhow::Result;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use anyhow::Result;
 use tracing::info;
 
 use expert_config::Config;

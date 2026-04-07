@@ -10,18 +10,11 @@ impl LlamaCppClient {
     pub fn new(base_url: &str) -> Self {
         Self {
             client: reqwest::Client::new(),
-            url: format!(
-                "{}/v1/chat/completions",
-                base_url.trim_end_matches('/')
-            ),
+            url: format!("{}/v1/chat/completions", base_url.trim_end_matches('/')),
         }
     }
 
-    pub async fn chat_completion(
-        &self,
-        messages: &[Value],
-        tools: &[Value],
-    ) -> Result<Value> {
+    pub async fn chat_completion(&self, messages: &[Value], tools: &[Value]) -> Result<Value> {
         let mut body = serde_json::json!({
             "messages": messages,
             "temperature": 0.7,

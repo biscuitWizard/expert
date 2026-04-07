@@ -54,7 +54,7 @@ impl ActivityRegistry {
             goal_tree_root_id: goals.first().map(|g| g.id.clone()).unwrap_or_default(),
             goal_matrix,
             goal_indices,
-            h: vec![0.0; 256], // SSM hidden dim
+            h: vec![0.0; 256],   // SSM hidden dim
             theta: vec![0.5; k], // initial thresholds
             ema: 0.0,
             centroid: vec![0.0; dim],
@@ -132,8 +132,12 @@ mod tests {
         let mut reg = ActivityRegistry::new();
         let goals = vec![make_goal("a", 4)];
         reg.create_activity(
-            "act-1".into(), "stream-1".into(), "test".into(),
-            goals, Vec::new(), "w-1".into(),
+            "act-1".into(),
+            "stream-1".into(),
+            "test".into(),
+            goals,
+            Vec::new(),
+            "w-1".into(),
         );
         assert!(reg.get("act-1").is_some());
         assert!(reg.get("act-999").is_none());
@@ -145,12 +149,20 @@ mod tests {
         assert_eq!(reg.list().len(), 0);
 
         reg.create_activity(
-            "a1".into(), "s1".into(), "d".into(),
-            vec![make_goal("x", 4)], Vec::new(), "w".into(),
+            "a1".into(),
+            "s1".into(),
+            "d".into(),
+            vec![make_goal("x", 4)],
+            Vec::new(),
+            "w".into(),
         );
         reg.create_activity(
-            "a2".into(), "s1".into(), "d".into(),
-            vec![make_goal("y", 4)], Vec::new(), "w".into(),
+            "a2".into(),
+            "s1".into(),
+            "d".into(),
+            vec![make_goal("y", 4)],
+            Vec::new(),
+            "w".into(),
         );
         assert_eq!(reg.list().len(), 2);
     }
@@ -159,8 +171,12 @@ mod tests {
     fn test_remove() {
         let mut reg = ActivityRegistry::new();
         reg.create_activity(
-            "act-1".into(), "s1".into(), "d".into(),
-            vec![make_goal("a", 4)], Vec::new(), "w".into(),
+            "act-1".into(),
+            "s1".into(),
+            "d".into(),
+            vec![make_goal("a", 4)],
+            Vec::new(),
+            "w".into(),
         );
         let removed = reg.remove("act-1");
         assert!(removed.is_some());
@@ -172,11 +188,19 @@ mod tests {
     fn test_goal_matrix_shape() {
         let mut reg = ActivityRegistry::new();
         let dim = 8;
-        let goals = vec![make_goal("a", dim), make_goal("b", dim), make_goal("c", dim)];
+        let goals = vec![
+            make_goal("a", dim),
+            make_goal("b", dim),
+            make_goal("c", dim),
+        ];
         let k = goals.len();
         reg.create_activity(
-            "act-1".into(), "s1".into(), "d".into(),
-            goals, Vec::new(), "w".into(),
+            "act-1".into(),
+            "s1".into(),
+            "d".into(),
+            goals,
+            Vec::new(),
+            "w".into(),
         );
         let managed = reg.get("act-1").unwrap();
         assert_eq!(managed.state.goal_matrix.len(), k * dim);
@@ -188,8 +212,12 @@ mod tests {
     fn test_initial_lifecycle_state() {
         let mut reg = ActivityRegistry::new();
         reg.create_activity(
-            "act-1".into(), "s1".into(), "d".into(),
-            vec![make_goal("a", 4)], Vec::new(), "w".into(),
+            "act-1".into(),
+            "s1".into(),
+            "d".into(),
+            vec![make_goal("a", 4)],
+            Vec::new(),
+            "w".into(),
         );
         let managed = reg.get("act-1").unwrap();
         assert_eq!(managed.state.lifecycle_state, ActivityLifecycle::ColdStart);

@@ -191,7 +191,7 @@ async fn handle_query(store: &QdrantStore, query: &RagQuery) -> RagResult {
                         exchanges: Vec::new(),
                         compressed_history: None,
                         error: Some("missing embedding for semantic search".to_string()),
-                    }
+                    };
                 }
             };
 

@@ -1,6 +1,6 @@
 use redis::aio::MultiplexedConnection;
 use redis::{AsyncCommands, RedisResult};
-use serde::{de::DeserializeOwned, Serialize};
+use serde::{Serialize, de::DeserializeOwned};
 use tracing::{debug, warn};
 
 const DATA_FIELD: &str = "data";
@@ -16,17 +16,14 @@ impl StreamProducer {
     }
 
     /// XADD with approximate MAXLEN trimming. Returns the stream entry ID.
-    pub async fn publish<T: Serialize>(
-        &mut self,
-        stream: &str,
-        msg: &T,
-    ) -> RedisResult<String> {
-        let json = serde_json::to_string(msg)
-            .map_err(|e| redis::RedisError::from((
+    pub async fn publish<T: Serialize>(&mut self, stream: &str, msg: &T) -> RedisResult<String> {
+        let json = serde_json::to_string(msg).map_err(|e| {
+            redis::RedisError::from((
                 redis::ErrorKind::IoError,
                 "JSON serialization failed",
                 e.to_string(),
-            )))?;
+            ))
+        })?;
 
         let id: String = redis::cmd("XADD")
             .arg(stream)
@@ -87,20 +84,26 @@ impl StreamConsumer {
             }
         }
 
-        Ok(Self { conn, stream, group, consumer, block_ms })
+        Ok(Self {
+            conn,
+            stream,
+            group,
+            consumer,
+            block_ms,
+        })
     }
 
     /// Block-read one message from the stream. Returns `None` on timeout.
-    pub async fn consume<T: DeserializeOwned>(
-        &mut self,
-    ) -> RedisResult<Option<(String, T)>> {
+    pub async fn consume<T: DeserializeOwned>(&mut self) -> RedisResult<Option<(String, T)>> {
         let opts = redis::streams::StreamReadOptions::default()
             .group(&self.group, &self.consumer)
             .count(1)
             .block(self.block_ms);
 
-        let result: redis::streams::StreamReadReply =
-            self.conn.xread_options(&[&self.stream], &[">"], &opts).await?;
+        let result: redis::streams::StreamReadReply = self
+            .conn
+            .xread_options(&[&self.stream], &[">"], &opts)
+            .await?;
 
         for stream_key in result.keys {
             for entry in stream_key.ids {
@@ -167,7 +170,10 @@ pub async fn xrevrange<T: DeserializeOwned>(
                     while i + 1 < fields.len() {
                         let key = match &fields[i] {
                             redis::Value::BulkString(b) => String::from_utf8_lossy(b).to_string(),
-                            _ => { i += 2; continue; }
+                            _ => {
+                                i += 2;
+                                continue;
+                            }
                         };
                         if key == DATA_FIELD {
                             if let redis::Value::BulkString(ref bytes) = fields[i + 1] {

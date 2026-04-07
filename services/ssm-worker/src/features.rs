@@ -1,5 +1,5 @@
-use ndarray::{Array1, ArrayView1};
 use expert_vectors::{cosine_similarity, ema_update, mahalanobis_diagonal};
+use ndarray::{Array1, ArrayView1};
 
 /// Per-activity feature state maintained across events.
 pub struct FeatureState {
@@ -94,8 +94,10 @@ pub fn compute_features(
 
     // Update inverse variance
     if feature_state.event_count >= 2 {
-        feature_state.inv_var =
-            expert_vectors::inverse_variance(feature_state.var_accum.view(), feature_state.event_count);
+        feature_state.inv_var = expert_vectors::inverse_variance(
+            feature_state.var_accum.view(),
+            feature_state.event_count,
+        );
     }
 
     // Drift: distance between current and previous centroid
@@ -137,14 +139,13 @@ pub fn compute_features(
 
     // Concatenate: [projected_embedding, per_goal_cosines, ema_per_goal, drift, surprise, delta_t, silences...]
     let num_scalars = 3 + k; // drift + surprise + delta_t + per-goal silence
-    let mut features =
-        Vec::with_capacity(projected_embedding.len() + k + num_scalars);
+    let mut features = Vec::with_capacity(projected_embedding.len() + k + num_scalars);
 
     features.extend(projected_embedding.iter());
     features.extend(&cosines);
     features.push(drift);
     features.push(surprise.min(10.0)); // clamp outliers
-    features.push(delta_t.min(60.0));  // clamp to 60s max
+    features.push(delta_t.min(60.0)); // clamp to 60s max
     features.extend(&silences);
 
     features
@@ -192,7 +193,10 @@ mod tests {
         let eps = 1e-5;
         for i in 4..4 + k {
             let cos = features[i];
-            assert!(cos >= -1.0 - eps && cos <= 1.0 + eps, "cosine {cos} out of range");
+            assert!(
+                cos >= -1.0 - eps && cos <= 1.0 + eps,
+                "cosine {cos} out of range"
+            );
         }
     }
 
@@ -215,7 +219,10 @@ mod tests {
         // Second event 2500ms later: delta_t should be 2.5
         let f2 = compute_features(emb.view(), &goals, &mut state, 3500, &projected);
         let delta_t_2 = f2[delta_t_idx];
-        assert!((delta_t_2 - 2.5).abs() < 0.01, "delta_t should be 2.5, got {delta_t_2}");
+        assert!(
+            (delta_t_2 - 2.5).abs() < 0.01,
+            "delta_t should be 2.5, got {delta_t_2}"
+        );
     }
 
     #[test]
@@ -230,11 +237,17 @@ mod tests {
 
         compute_features(emb.view(), &goals, &mut state, 1000, &projected);
         let ema_after_one = state.ema_relevance[0];
-        assert!(ema_after_one > 0.0, "EMA should be positive for identical vectors");
+        assert!(
+            ema_after_one > 0.0,
+            "EMA should be positive for identical vectors"
+        );
 
         compute_features(emb.view(), &goals, &mut state, 2000, &projected);
         let ema_after_two = state.ema_relevance[0];
-        assert!(ema_after_two > ema_after_one, "EMA should increase with repeated relevant events");
+        assert!(
+            ema_after_two > ema_after_one,
+            "EMA should increase with repeated relevant events"
+        );
     }
 
     #[test]

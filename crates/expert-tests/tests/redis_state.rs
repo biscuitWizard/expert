@@ -14,7 +14,10 @@ async fn test_json_roundtrip() {
     flush_redis(&mut conn).await;
 
     let mut store = StateStore::new(conn);
-    let data = TestData { name: "hello".into(), value: 42 };
+    let data = TestData {
+        name: "hello".into(),
+        value: 42,
+    };
 
     store.set_json("test:json:rt", &data).await.unwrap();
     let result: Option<TestData> = store.get_json("test:json:rt").await.unwrap();
@@ -37,7 +40,10 @@ async fn test_set_json_ex_expires() {
     flush_redis(&mut conn).await;
 
     let mut store = StateStore::new(conn);
-    let data = TestData { name: "ephemeral".into(), value: 1 };
+    let data = TestData {
+        name: "ephemeral".into(),
+        value: 1,
+    };
 
     store.set_json_ex("test:ttl", &data, 1).await.unwrap();
     let before: Option<TestData> = store.get_json("test:ttl").await.unwrap();

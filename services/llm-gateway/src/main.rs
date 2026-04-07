@@ -68,10 +68,7 @@ async fn invoke_llm(
     config: &Config,
     producer: &mut StreamProducer,
 ) -> Result<()> {
-    let mut router = ToolRouter::new(
-        package,
-        config.llm_max_labels_per_invocation,
-    );
+    let mut router = ToolRouter::new(package, config.llm_max_labels_per_invocation);
 
     // Build tool definitions for llamacpp
     let tools_json = tools::build_tools_json(&package.tool_definitions);
@@ -137,10 +134,7 @@ async fn invoke_llm(
                     }
                 })
                 .unwrap_or(serde_json::Value::Object(Default::default()));
-            let tool_call_id = tc
-                .get("id")
-                .and_then(|id| id.as_str())
-                .unwrap_or("unknown");
+            let tool_call_id = tc.get("id").and_then(|id| id.as_str()).unwrap_or("unknown");
 
             info!(tool = tool_name, iteration, "processing tool call");
 
@@ -186,11 +180,7 @@ async fn invoke_llm(
             .map(|g| g.id.clone())
             .unwrap_or_default(),
         domain: package.firing_goals.first().and_then(|g| g.domain.clone()),
-        embedding: package
-            .trigger_event
-            .embedding
-            .clone()
-            .unwrap_or_default(),
+        embedding: package.trigger_event.embedding.clone().unwrap_or_default(),
         trigger_event_id: package.trigger_event.id.clone(),
         trigger_scores: package.trigger_scores.clone(),
         rendered_prompt: package.rendered_prompt.clone(),

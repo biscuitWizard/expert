@@ -12,13 +12,16 @@ async fn test_event_serialization_roundtrip() {
 
     producer.publish(&stream, &event).await.unwrap();
 
-    let mut consumer = expert_redis::StreamConsumer::new(
-        conn.clone(), stream, "grp".into(), "c0".into(), 1000,
-    ).await.unwrap();
+    let mut consumer =
+        expert_redis::StreamConsumer::new(conn.clone(), stream, "grp".into(), "c0".into(), 1000)
+            .await
+            .unwrap();
 
     let (_, deserialized) = consumer
         .consume::<expert_types::event::Event>()
-        .await.unwrap().unwrap();
+        .await
+        .unwrap()
+        .unwrap();
 
     assert_eq!(deserialized.id, event.id);
     assert_eq!(deserialized.stream_id, event.stream_id);
@@ -38,13 +41,16 @@ async fn test_fire_signal_roundtrip() {
 
     producer.publish(&stream, &signal).await.unwrap();
 
-    let mut consumer = expert_redis::StreamConsumer::new(
-        conn.clone(), stream, "grp".into(), "c0".into(), 1000,
-    ).await.unwrap();
+    let mut consumer =
+        expert_redis::StreamConsumer::new(conn.clone(), stream, "grp".into(), "c0".into(), 1000)
+            .await
+            .unwrap();
 
     let (_, deserialized) = consumer
         .consume::<expert_types::signals::FireSignal>()
-        .await.unwrap().unwrap();
+        .await
+        .unwrap()
+        .unwrap();
 
     assert_eq!(deserialized.activity_id, signal.activity_id);
     assert_eq!(deserialized.stream_id, signal.stream_id);
@@ -65,19 +71,28 @@ async fn test_assemble_request_roundtrip() {
 
     producer.publish(&stream, &req).await.unwrap();
 
-    let mut consumer = expert_redis::StreamConsumer::new(
-        conn.clone(), stream, "grp".into(), "c0".into(), 1000,
-    ).await.unwrap();
+    let mut consumer =
+        expert_redis::StreamConsumer::new(conn.clone(), stream, "grp".into(), "c0".into(), 1000)
+            .await
+            .unwrap();
 
     let (_, deserialized) = consumer
         .consume::<expert_types::signals::AssembleRequest>()
-        .await.unwrap().unwrap();
+        .await
+        .unwrap()
+        .unwrap();
 
     assert_eq!(deserialized.activity_id, req.activity_id);
     assert_eq!(deserialized.stream_id, req.stream_id);
     assert_eq!(deserialized.goal_tree.len(), req.goal_tree.len());
-    assert_eq!(deserialized.tool_definitions.len(), req.tool_definitions.len());
-    assert_eq!(deserialized.fire_signal.activity_id, req.fire_signal.activity_id);
+    assert_eq!(
+        deserialized.tool_definitions.len(),
+        req.tool_definitions.len()
+    );
+    assert_eq!(
+        deserialized.fire_signal.activity_id,
+        req.fire_signal.activity_id
+    );
 }
 
 #[tokio::test]
@@ -91,13 +106,16 @@ async fn test_training_example_roundtrip() {
 
     producer.publish(&stream, &example).await.unwrap();
 
-    let mut consumer = expert_redis::StreamConsumer::new(
-        conn.clone(), stream, "grp".into(), "c0".into(), 1000,
-    ).await.unwrap();
+    let mut consumer =
+        expert_redis::StreamConsumer::new(conn.clone(), stream, "grp".into(), "c0".into(), 1000)
+            .await
+            .unwrap();
 
     let (_, deserialized) = consumer
         .consume::<expert_types::training::TrainingExample>()
-        .await.unwrap().unwrap();
+        .await
+        .unwrap()
+        .unwrap();
 
     assert_eq!(deserialized.id, example.id);
     assert_eq!(deserialized.activity_id, example.activity_id);

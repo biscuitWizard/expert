@@ -1,13 +1,15 @@
-use std::collections::HashMap;
+use expert_types::context::Episode;
 use expert_types::event::Event;
 use expert_types::goal::{Goal, GoalAggregation};
 use expert_types::signals::{AssembleRequest, FireSignal, ToolDefinition};
-use expert_types::context::Episode;
 use expert_types::training::{Label, LabelSource, TrainingExample};
+use std::collections::HashMap;
 
 pub async fn redis_conn() -> redis::aio::MultiplexedConnection {
     let url = std::env::var("REDIS_URL").unwrap_or_else(|_| "redis://127.0.0.1:6379".to_string());
-    expert_redis::connect(&url).await.expect("failed to connect to Redis")
+    expert_redis::connect(&url)
+        .await
+        .expect("failed to connect to Redis")
 }
 
 pub async fn flush_redis(conn: &mut redis::aio::MultiplexedConnection) {

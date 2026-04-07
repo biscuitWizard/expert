@@ -102,11 +102,7 @@ async fn main() -> Result<()> {
             loop {
                 match consumer.consume::<Event>().await {
                     Ok(Some((id, event))) => {
-                        if tx
-                            .send(BatchItem::RawEvent { event })
-                            .await
-                            .is_err()
-                        {
+                        if tx.send(BatchItem::RawEvent { event }).await.is_err() {
                             break;
                         }
                         let _ = consumer.ack(&id).await;
@@ -145,11 +141,7 @@ async fn main() -> Result<()> {
             loop {
                 match consumer.consume::<EncodeRequest>().await {
                     Ok(Some((id, req))) => {
-                        if tx
-                            .send(BatchItem::EncodeReq { req })
-                            .await
-                            .is_err()
-                        {
+                        if tx.send(BatchItem::EncodeReq { req }).await.is_err() {
                             break;
                         }
                         let _ = consumer.ack(&id).await;
@@ -170,7 +162,11 @@ async fn main() -> Result<()> {
     let max_batch = config.encoder_max_batch;
     let flush_timeout = Duration::from_millis(config.encoder_flush_ms);
 
-    info!(max_batch, flush_ms = config.encoder_flush_ms, "micro-batcher started");
+    info!(
+        max_batch,
+        flush_ms = config.encoder_flush_ms,
+        "micro-batcher started"
+    );
 
     loop {
         let mut batch: Vec<BatchItem> = Vec::with_capacity(max_batch);
@@ -187,7 +183,12 @@ async fn main() -> Result<()> {
         // Try to fill up to max_batch or flush_timeout
         let deadline = tokio::time::Instant::now() + flush_timeout;
         while batch.len() < max_batch {
-            match timeout(deadline.saturating_duration_since(tokio::time::Instant::now()), batch_rx.recv()).await {
+            match timeout(
+                deadline.saturating_duration_since(tokio::time::Instant::now()),
+                batch_rx.recv(),
+            )
+            .await
+            {
                 Ok(Some(item)) => batch.push(item),
                 Ok(None) => break,
                 Err(_) => break, // timeout

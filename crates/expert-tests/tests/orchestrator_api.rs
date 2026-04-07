@@ -1,14 +1,14 @@
-use std::sync::Arc;
-use tokio::sync::RwLock;
+use axum::Json;
 use axum::Router;
-use axum::routing::{delete, get, post};
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
-use axum::Json;
+use axum::routing::{delete, get, post};
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
+use tokio::sync::RwLock;
 
-use expert_redis::{StreamProducer, StateStore};
+use expert_redis::{StateStore, StreamProducer};
 use expert_tests::*;
 
 struct TestAppState {
@@ -80,7 +80,12 @@ async fn create_activity(
         domain: domain.clone(),
         goal_count: req.goals.len(),
     };
-    state.registry.write().await.activities.insert(activity_id.clone(), entry.clone());
+    state
+        .registry
+        .write()
+        .await
+        .activities
+        .insert(activity_id.clone(), entry.clone());
 
     let resp = ActivityResponse {
         activity_id: entry.activity_id,
@@ -93,12 +98,16 @@ async fn create_activity(
 
 async fn list_activities(State(state): State<Arc<TestAppState>>) -> impl IntoResponse {
     let reg = state.registry.read().await;
-    let list: Vec<ActivityResponse> = reg.activities.values().map(|e| ActivityResponse {
-        activity_id: e.activity_id.clone(),
-        stream_id: e.stream_id.clone(),
-        domain: e.domain.clone(),
-        goal_count: e.goal_count,
-    }).collect();
+    let list: Vec<ActivityResponse> = reg
+        .activities
+        .values()
+        .map(|e| ActivityResponse {
+            activity_id: e.activity_id.clone(),
+            stream_id: e.stream_id.clone(),
+            domain: e.domain.clone(),
+            goal_count: e.goal_count,
+        })
+        .collect();
     Json(list)
 }
 
@@ -137,7 +146,9 @@ async fn setup() -> (reqwest::Client, String) {
     flush_redis(&mut conn).await;
 
     let state = Arc::new(TestAppState {
-        registry: RwLock::new(Registry { activities: std::collections::HashMap::new() }),
+        registry: RwLock::new(Registry {
+            activities: std::collections::HashMap::new(),
+        }),
         producer: RwLock::new(StreamProducer::new(conn.clone(), 1000)),
         state_store: RwLock::new(StateStore::new(conn)),
     });
@@ -172,23 +183,37 @@ async fn test_create_list_delete_activity() {
         "goals": [{"name": "g1", "description": "goal 1"}]
     });
 
-    let create_resp = client.post(format!("{base}/activities"))
+    let create_resp = client
+        .post(format!("{base}/activities"))
         .json(&body)
-        .send().await.unwrap();
+        .send()
+        .await
+        .unwrap();
     assert_eq!(create_resp.status(), 201);
     let created: serde_json::Value = create_resp.json().await.unwrap();
     let activity_id = created["activity_id"].as_str().unwrap().to_string();
 
-    let list_resp = client.get(format!("{base}/activities")).send().await.unwrap();
+    let list_resp = client
+        .get(format!("{base}/activities"))
+        .send()
+        .await
+        .unwrap();
     assert_eq!(list_resp.status(), 200);
     let list: Vec<serde_json::Value> = list_resp.json().await.unwrap();
     assert_eq!(list.len(), 1);
 
-    let del_resp = client.delete(format!("{base}/activities/{activity_id}"))
-        .send().await.unwrap();
+    let del_resp = client
+        .delete(format!("{base}/activities/{activity_id}"))
+        .send()
+        .await
+        .unwrap();
     assert_eq!(del_resp.status(), 204);
 
-    let list_resp2 = client.get(format!("{base}/activities")).send().await.unwrap();
+    let list_resp2 = client
+        .get(format!("{base}/activities"))
+        .send()
+        .await
+        .unwrap();
     let list2: Vec<serde_json::Value> = list_resp2.json().await.unwrap();
     assert_eq!(list2.len(), 0);
 }
@@ -196,15 +221,21 @@ async fn test_create_list_delete_activity() {
 #[tokio::test]
 async fn test_get_unknown_activity_404() {
     let (client, base) = setup().await;
-    let resp = client.get(format!("{base}/activities/nonexistent-id"))
-        .send().await.unwrap();
+    let resp = client
+        .get(format!("{base}/activities/nonexistent-id"))
+        .send()
+        .await
+        .unwrap();
     assert_eq!(resp.status(), 404);
 }
 
 #[tokio::test]
 async fn test_delete_unknown_activity_404() {
     let (client, base) = setup().await;
-    let resp = client.delete(format!("{base}/activities/nonexistent-id"))
-        .send().await.unwrap();
+    let resp = client
+        .delete(format!("{base}/activities/nonexistent-id"))
+        .send()
+        .await
+        .unwrap();
     assert_eq!(resp.status(), 404);
 }

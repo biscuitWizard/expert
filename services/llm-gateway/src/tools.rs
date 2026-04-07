@@ -3,8 +3,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use serde_json::Value;
 use tracing::{info, warn};
 
-use expert_redis::names;
 use expert_redis::StreamProducer;
+use expert_redis::names;
 use expert_types::context::ContextPackage;
 use expert_types::signals::{GoalUpdateRequest, ToolDefinition};
 use expert_types::training::{Label, LabelSource, TrainingExample};
@@ -56,11 +56,7 @@ impl<'a> ToolRouter<'a> {
         }
     }
 
-    async fn handle_suppress(
-        &mut self,
-        arguments: &Value,
-        producer: &mut StreamProducer,
-    ) -> Value {
+    async fn handle_suppress(&mut self, arguments: &Value, producer: &mut StreamProducer) -> Value {
         if self.label_count >= self.max_labels {
             return serde_json::json!({"error": "label limit reached for this invocation"});
         }
@@ -127,11 +123,7 @@ impl<'a> ToolRouter<'a> {
         serde_json::json!({"status": "recorded", "label": "negative"})
     }
 
-    async fn handle_recall(
-        &mut self,
-        arguments: &Value,
-        producer: &mut StreamProducer,
-    ) -> Value {
+    async fn handle_recall(&mut self, arguments: &Value, producer: &mut StreamProducer) -> Value {
         if self.label_count >= self.max_labels {
             return serde_json::json!({"error": "label limit reached for this invocation"});
         }
@@ -219,9 +211,18 @@ impl<'a> ToolRouter<'a> {
         arguments: &Value,
         producer: &mut StreamProducer,
     ) -> Value {
-        let goal_id = arguments.get("goal_id").and_then(|v| v.as_str()).unwrap_or("");
-        let description = arguments.get("description").and_then(|v| v.as_str()).unwrap_or("");
-        let blend_factor = arguments.get("blend_factor").and_then(|v| v.as_f64()).unwrap_or(0.5) as f32;
+        let goal_id = arguments
+            .get("goal_id")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        let description = arguments
+            .get("description")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        let blend_factor = arguments
+            .get("blend_factor")
+            .and_then(|v| v.as_f64())
+            .unwrap_or(0.5) as f32;
 
         let req = GoalUpdateRequest {
             activity_id: self.package.activity_id.clone(),
@@ -241,13 +242,15 @@ impl<'a> ToolRouter<'a> {
         serde_json::json!({"status": "submitted", "goal_id": goal_id})
     }
 
-    async fn handle_add_goal(
-        &mut self,
-        arguments: &Value,
-        producer: &mut StreamProducer,
-    ) -> Value {
-        let description = arguments.get("description").and_then(|v| v.as_str()).unwrap_or("");
-        let name = arguments.get("name").and_then(|v| v.as_str()).unwrap_or(description);
+    async fn handle_add_goal(&mut self, arguments: &Value, producer: &mut StreamProducer) -> Value {
+        let description = arguments
+            .get("description")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        let name = arguments
+            .get("name")
+            .and_then(|v| v.as_str())
+            .unwrap_or(description);
 
         let req = GoalUpdateRequest {
             activity_id: self.package.activity_id.clone(),
@@ -273,9 +276,18 @@ impl<'a> ToolRouter<'a> {
         producer: &mut StreamProducer,
     ) -> Value {
         // Route as a goal update request with the hint embedded
-        let goal_id = arguments.get("goal_id").and_then(|v| v.as_str()).unwrap_or("");
-        let direction = arguments.get("direction").and_then(|v| v.as_str()).unwrap_or("raise");
-        let magnitude = arguments.get("magnitude").and_then(|v| v.as_str()).unwrap_or("slight");
+        let goal_id = arguments
+            .get("goal_id")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        let direction = arguments
+            .get("direction")
+            .and_then(|v| v.as_str())
+            .unwrap_or("raise");
+        let magnitude = arguments
+            .get("magnitude")
+            .and_then(|v| v.as_str())
+            .unwrap_or("slight");
 
         let hint = expert_types::signals::ThresholdHint {
             activity_id: self.package.activity_id.clone(),
@@ -297,7 +309,10 @@ impl<'a> ToolRouter<'a> {
             return serde_json::json!({"error": "failed to submit threshold hint"});
         }
 
-        info!(goal_id, direction, magnitude, "set_threshold_hint() submitted");
+        info!(
+            goal_id,
+            direction, magnitude, "set_threshold_hint() submitted"
+        );
         serde_json::json!({"status": "submitted"})
     }
 }
@@ -371,6 +386,15 @@ mod tests {
             .iter()
             .map(|t| t["function"]["name"].as_str().unwrap())
             .collect();
-        assert_eq!(names, vec!["suppress", "recall", "update_goal", "add_goal", "set_threshold_hint"]);
+        assert_eq!(
+            names,
+            vec![
+                "suppress",
+                "recall",
+                "update_goal",
+                "add_goal",
+                "set_threshold_hint"
+            ]
+        );
     }
 }
