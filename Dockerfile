@@ -11,6 +11,7 @@ WORKDIR /app
 COPY Cargo.toml Cargo.lock* ./
 COPY crates/ crates/
 COPY services/ services/
+COPY tools/ tools/
 
 # Build the target service in release mode
 ARG SERVICE
