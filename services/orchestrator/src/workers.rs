@@ -669,6 +669,20 @@ async fn handle_invocation_complete(state: &AppState, signal: InvocationComplete
 
     drop(registry);
 
+    let mut detail = serde_json::json!({
+        "activity_id": signal.activity_id,
+        "success": signal.success,
+    });
+    if let Some(ref et) = signal.event_type {
+        detail["event_type"] = serde_json::json!(et);
+    }
+    if let Some(ref name) = signal.author_name {
+        detail["author_name"] = serde_json::json!(name);
+    }
+    if let Some(ref resp) = signal.response_preview {
+        detail["response"] = serde_json::json!(resp);
+    }
+
     if signal.success {
         info!(activity_id = %signal.activity_id, "invocation completed successfully");
         state
@@ -676,10 +690,7 @@ async fn handle_invocation_complete(state: &AppState, signal: InvocationComplete
             .push(
                 "invocation_complete",
                 format!("Invocation complete for {}", &signal.activity_id[..8]),
-                Some(serde_json::json!({
-                    "activity_id": signal.activity_id,
-                    "success": true,
-                })),
+                Some(detail),
             )
             .await;
     } else {
@@ -689,10 +700,7 @@ async fn handle_invocation_complete(state: &AppState, signal: InvocationComplete
             .push(
                 "invocation_failed",
                 format!("Invocation failed for {}", &signal.activity_id[..8]),
-                Some(serde_json::json!({
-                    "activity_id": signal.activity_id,
-                    "success": false,
-                })),
+                Some(detail),
             )
             .await;
     }

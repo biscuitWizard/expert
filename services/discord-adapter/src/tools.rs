@@ -7,13 +7,13 @@ pub fn discord_tool_definitions() -> Vec<ToolDefinition> {
     vec![
         ToolDefinition {
             name: "send_message".to_string(),
-            description: "Send a message to a Discord channel.".to_string(),
+            description: "Send an unsolicited message to a Discord channel. Use reply_to_message instead when responding to a specific message.".to_string(),
             parameters_schema: serde_json::json!({
                 "type": "object",
                 "properties": {
                     "channel_id": {
                         "type": "string",
-                        "description": "The ID of the channel to send the message to"
+                        "description": "The Discord snowflake channel ID. Use the exact channel_id from event metadata -- do not fabricate IDs."
                     },
                     "content": {
                         "type": "string",
@@ -26,17 +26,17 @@ pub fn discord_tool_definitions() -> Vec<ToolDefinition> {
         },
         ToolDefinition {
             name: "reply_to_message".to_string(),
-            description: "Reply to a specific message in a Discord channel.".to_string(),
+            description: "Reply to a specific message in a Discord guild channel. Use this to respond to guild channel messages (event_type=message).".to_string(),
             parameters_schema: serde_json::json!({
                 "type": "object",
                 "properties": {
                     "channel_id": {
                         "type": "string",
-                        "description": "The ID of the channel containing the message"
+                        "description": "The Discord snowflake channel ID from the trigger event metadata. Use the exact value -- do not fabricate IDs."
                     },
                     "message_id": {
                         "type": "string",
-                        "description": "The ID of the message to reply to"
+                        "description": "The Discord snowflake message ID from the trigger event metadata. Use the exact value -- do not fabricate IDs."
                     },
                     "content": {
                         "type": "string",
@@ -49,13 +49,13 @@ pub fn discord_tool_definitions() -> Vec<ToolDefinition> {
         },
         ToolDefinition {
             name: "send_dm".to_string(),
-            description: "Send a direct message to a Discord user.".to_string(),
+            description: "Send a direct message to a Discord user. Use this to respond to DM events (event_type=dm).".to_string(),
             parameters_schema: serde_json::json!({
                 "type": "object",
                 "properties": {
                     "user_id": {
                         "type": "string",
-                        "description": "The ID of the user to DM"
+                        "description": "The Discord snowflake user ID. For responding to an incoming DM, use the author_id from the trigger event metadata. Do not fabricate IDs."
                     },
                     "content": {
                         "type": "string",
@@ -74,11 +74,11 @@ pub fn discord_tool_definitions() -> Vec<ToolDefinition> {
                 "properties": {
                     "channel_id": {
                         "type": "string",
-                        "description": "The ID of the channel containing the message"
+                        "description": "The Discord snowflake channel ID from event metadata. Do not fabricate IDs."
                     },
                     "message_id": {
                         "type": "string",
-                        "description": "The ID of the message to react to"
+                        "description": "The Discord snowflake message ID from event metadata. Do not fabricate IDs."
                     },
                     "emoji": {
                         "type": "string",
@@ -112,7 +112,7 @@ pub fn discord_tool_definitions() -> Vec<ToolDefinition> {
                 "properties": {
                     "guild_id": {
                         "type": "string",
-                        "description": "The ID of the guild to leave"
+                        "description": "The Discord snowflake guild ID. Use the exact value from event metadata."
                     }
                 },
                 "required": ["guild_id"]
@@ -142,7 +142,7 @@ pub fn discord_tool_definitions() -> Vec<ToolDefinition> {
                 "properties": {
                     "user_id": {
                         "type": "string",
-                        "description": "The ID of the user whose friend request to accept"
+                        "description": "The Discord snowflake user ID from event metadata. Do not fabricate IDs."
                     }
                 },
                 "required": ["user_id"]
@@ -157,7 +157,7 @@ pub fn discord_tool_definitions() -> Vec<ToolDefinition> {
                 "properties": {
                     "user_id": {
                         "type": "string",
-                        "description": "The ID of the friend to remove"
+                        "description": "The Discord snowflake user ID. Do not fabricate IDs."
                     }
                 },
                 "required": ["user_id"]
@@ -172,7 +172,7 @@ pub fn discord_tool_definitions() -> Vec<ToolDefinition> {
                 "properties": {
                     "channel_id": {
                         "type": "string",
-                        "description": "The ID of the channel to show typing in"
+                        "description": "The Discord snowflake channel ID from event metadata. Do not fabricate IDs."
                     }
                 },
                 "required": ["channel_id"]

@@ -247,6 +247,7 @@ async fn run_slow_training_loop(
             &base_ckpt,
             &train_config,
             &checkpoint_id,
+            &[],
         ) {
             Ok(result) => {
                 let path = format!("{}/{}.json", config.checkpoint_dir, checkpoint_id);
@@ -348,6 +349,7 @@ async fn run_medium_fewshot_loop(
             &base_ckpt,
             &train_config,
             &checkpoint_id,
+            &[],
         ) {
             Ok(result) => {
                 let path = format!("{}/{}.json", config.checkpoint_dir, checkpoint_id);

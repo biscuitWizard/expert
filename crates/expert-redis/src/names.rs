@@ -73,6 +73,10 @@ pub fn summarize_pending_key(activity_id: &str) -> String {
     format!("summarize_pending:{activity_id}")
 }
 
+pub fn conversation_key(stream_id: &str, channel_id: &str) -> String {
+    format!("conv:{stream_id}:{channel_id}")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

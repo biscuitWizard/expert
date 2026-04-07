@@ -141,6 +141,127 @@ pub struct SummarizeResult {
 pub struct InvocationComplete {
     pub activity_id: String,
     pub success: bool,
+    /// Truncated preview of the LLM response for panel display.
+    #[serde(default)]
+    pub response_preview: Option<String>,
+    /// "dm" or "message" from the trigger event metadata, for panel context.
+    #[serde(default)]
+    pub event_type: Option<String>,
+    /// Author display name from the trigger event metadata.
+    #[serde(default)]
+    pub author_name: Option<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn bot_identity_serde_roundtrip() {
+        let identity = BotIdentity {
+            username: "zero".to_string(),
+            user_id: "12345".to_string(),
+            display_name: Some("Zero Bot".to_string()),
+        };
+        let json = serde_json::to_string(&identity).unwrap();
+        let back: BotIdentity = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.username, "zero");
+        assert_eq!(back.user_id, "12345");
+        assert_eq!(back.display_name.as_deref(), Some("Zero Bot"));
+    }
+
+    #[test]
+    fn bot_identity_display_name_none_roundtrip() {
+        let identity = BotIdentity {
+            username: "zero".to_string(),
+            user_id: "12345".to_string(),
+            display_name: None,
+        };
+        let json = serde_json::to_string(&identity).unwrap();
+        let back: BotIdentity = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.username, "zero");
+        assert!(back.display_name.is_none());
+    }
+
+    #[test]
+    fn assemble_request_bot_identity_defaults_none() {
+        let json = r#"{
+            "activity_id": "act-1",
+            "stream_id": "s1",
+            "fire_signal": {
+                "activity_id": "act-1",
+                "stream_id": "s1",
+                "firing_goal_ids": [],
+                "scores": [],
+                "trigger_event_seq": "0-0",
+                "last_fired_seq": null,
+                "timestamp": 0
+            },
+            "goal_tree": [],
+            "tool_definitions": []
+        }"#;
+        let req: AssembleRequest = serde_json::from_str(json).unwrap();
+        assert!(req.bot_identity.is_none());
+    }
+
+    #[test]
+    fn assemble_request_with_bot_identity_roundtrip() {
+        let json = r#"{
+            "activity_id": "act-1",
+            "stream_id": "s1",
+            "fire_signal": {
+                "activity_id": "act-1",
+                "stream_id": "s1",
+                "firing_goal_ids": [],
+                "scores": [],
+                "trigger_event_seq": "0-0",
+                "last_fired_seq": null,
+                "timestamp": 0
+            },
+            "goal_tree": [],
+            "tool_definitions": [],
+            "bot_identity": {
+                "username": "zero",
+                "user_id": "12345",
+                "display_name": "Zero"
+            }
+        }"#;
+        let req: AssembleRequest = serde_json::from_str(json).unwrap();
+        let identity = req.bot_identity.unwrap();
+        assert_eq!(identity.username, "zero");
+        assert_eq!(identity.user_id, "12345");
+        assert_eq!(identity.display_name.as_deref(), Some("Zero"));
+    }
+
+    #[test]
+    fn assemble_request_full_roundtrip_preserves_bot_identity() {
+        let req = AssembleRequest {
+            activity_id: "act-1".to_string(),
+            stream_id: "s1".to_string(),
+            fire_signal: FireSignal {
+                activity_id: "act-1".to_string(),
+                stream_id: "s1".to_string(),
+                firing_goal_ids: vec![],
+                scores: vec![],
+                trigger_event_seq: "0-0".to_string(),
+                last_fired_seq: None,
+                timestamp: 0,
+            },
+            goal_tree: vec![],
+            tool_definitions: vec![],
+            bot_identity: Some(BotIdentity {
+                username: "zero".to_string(),
+                user_id: "99999".to_string(),
+                display_name: Some("ZeroDisplay".to_string()),
+            }),
+        };
+        let json = serde_json::to_string(&req).unwrap();
+        let back: AssembleRequest = serde_json::from_str(&json).unwrap();
+        let identity = back.bot_identity.unwrap();
+        assert_eq!(identity.username, "zero");
+        assert_eq!(identity.user_id, "99999");
+        assert_eq!(identity.display_name.as_deref(), Some("ZeroDisplay"));
+    }
 }
 
 /// Notification from training-service that a new model checkpoint is available.

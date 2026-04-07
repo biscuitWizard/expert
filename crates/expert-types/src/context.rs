@@ -81,6 +81,72 @@ pub struct SelfKnowledgeNode {
     pub updated_at: u64,
 }
 
+/// A single turn in a per-channel conversation buffer, stored in Redis.
+/// Lightweight struct for short-term conversational memory.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConversationTurn {
+    /// "user" or "assistant"
+    pub role: String,
+    pub content: String,
+    pub timestamp: u64,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn self_knowledge_node_serde_roundtrip() {
+        let node = SelfKnowledgeNode {
+            id: "sk-1".to_string(),
+            category: "core_identity".to_string(),
+            content: "I am Zero, an autonomous expert system.".to_string(),
+            embedding: vec![0.1, 0.2, 0.3],
+            created_at: 1000,
+            updated_at: 2000,
+        };
+        let json = serde_json::to_string(&node).unwrap();
+        let back: SelfKnowledgeNode = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.id, "sk-1");
+        assert_eq!(back.category, "core_identity");
+        assert_eq!(back.content, "I am Zero, an autonomous expert system.");
+        assert_eq!(back.embedding, vec![0.1, 0.2, 0.3]);
+        assert_eq!(back.created_at, 1000);
+        assert_eq!(back.updated_at, 2000);
+    }
+
+    #[test]
+    fn self_knowledge_node_embedding_defaults_empty() {
+        let json = r#"{
+            "id": "sk-2",
+            "category": "preference",
+            "content": "I prefer concise answers.",
+            "created_at": 1000,
+            "updated_at": 1000
+        }"#;
+        let node: SelfKnowledgeNode = serde_json::from_str(json).unwrap();
+        assert!(node.embedding.is_empty());
+        assert_eq!(node.category, "preference");
+    }
+
+    #[test]
+    fn self_knowledge_node_all_categories() {
+        for category in &["core_identity", "preference", "capability", "reflection"] {
+            let node = SelfKnowledgeNode {
+                id: format!("sk-{category}"),
+                category: category.to_string(),
+                content: format!("Test {category}"),
+                embedding: Vec::new(),
+                created_at: 0,
+                updated_at: 0,
+            };
+            let json = serde_json::to_string(&node).unwrap();
+            let back: SelfKnowledgeNode = serde_json::from_str(&json).unwrap();
+            assert_eq!(back.category, *category);
+        }
+    }
+}
+
 /// Server-side context assembly object. The `rendered_prompt` is what
 /// the LLM receives; all other fields are retained server-side for
 /// tool call resolution (e.g. recall() needs access to event embeddings).

@@ -60,8 +60,13 @@ async fn run_migrations(pool: &PgPool) {
     .expect("index creation failed");
 }
 
-async fn cleanup(pool: &PgPool) {
-    sqlx::query("DELETE FROM training_examples WHERE domain = 'test'")
+fn unique_domain(prefix: &str) -> String {
+    format!("{prefix}-{}", uuid::Uuid::new_v4())
+}
+
+async fn cleanup(pool: &PgPool, domain: &str) {
+    sqlx::query("DELETE FROM training_examples WHERE domain = $1")
+        .bind(domain)
         .execute(pool)
         .await
         .ok();
@@ -122,9 +127,11 @@ async fn test_migrations_idempotent() {
 async fn test_label_insert() {
     let pool = pool().await;
     run_migrations(&pool).await;
-    cleanup(&pool).await;
+    let domain = unique_domain("insert");
+    cleanup(&pool, &domain).await;
 
-    let example = fake_training_example();
+    let mut example = fake_training_example();
+    example.domain = Some(domain.clone());
     insert_example(&pool, &example).await.unwrap();
 
     let row: (String, String) =
@@ -137,16 +144,18 @@ async fn test_label_insert() {
     assert_eq!(row.0, example.id);
     assert_eq!(row.1, "test reason");
 
-    cleanup(&pool).await;
+    cleanup(&pool, &domain).await;
 }
 
 #[tokio::test]
 async fn test_duplicate_id_ignored() {
     let pool = pool().await;
     run_migrations(&pool).await;
-    cleanup(&pool).await;
+    let domain = unique_domain("dup");
+    cleanup(&pool, &domain).await;
 
-    let example = fake_training_example();
+    let mut example = fake_training_example();
+    example.domain = Some(domain.clone());
     insert_example(&pool, &example).await.unwrap();
     insert_example(&pool, &example).await.unwrap(); // should not error
 
@@ -158,35 +167,39 @@ async fn test_duplicate_id_ignored() {
 
     assert_eq!(count.0, 1, "duplicate insert should be ignored");
 
-    cleanup(&pool).await;
+    cleanup(&pool, &domain).await;
 }
 
 #[tokio::test]
 async fn test_query_by_domain_and_label() {
     let pool = pool().await;
     run_migrations(&pool).await;
-    cleanup(&pool).await;
+    let domain = unique_domain("label");
+    cleanup(&pool, &domain).await;
 
     let mut ex1 = fake_training_example();
     ex1.id = uuid::Uuid::new_v4().to_string();
+    ex1.domain = Some(domain.clone());
 
     let mut ex2 = fake_training_example();
     ex2.id = uuid::Uuid::new_v4().to_string();
+    ex2.domain = Some(domain.clone());
     ex2.label = expert_types::training::Label::Negative;
 
     insert_example(&pool, &ex1).await.unwrap();
     insert_example(&pool, &ex2).await.unwrap();
 
     let positives: (i64,) = sqlx::query_as(
-        "SELECT COUNT(*) FROM training_examples WHERE domain = 'test' AND label = '\"positive\"'",
+        "SELECT COUNT(*) FROM training_examples WHERE domain = $1 AND label = '\"positive\"'",
     )
+    .bind(&domain)
     .fetch_one(&pool)
     .await
     .unwrap();
 
     assert_eq!(positives.0, 1);
 
-    cleanup(&pool).await;
+    cleanup(&pool, &domain).await;
 }
 
 /// Consensus field shape matches serde expectations (no DB required).

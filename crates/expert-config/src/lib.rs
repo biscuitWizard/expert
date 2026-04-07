@@ -25,6 +25,8 @@ pub struct Config {
     pub fire_queue_ttl_ms: u64,
     pub debounce_ms: u64,
     pub refractory_ms: u64,
+    pub refractory_dm_ms: u64,
+    pub ssm_initial_theta: f32,
 
     pub context_max_recent_events: usize,
     pub context_max_episodes: usize,
@@ -92,6 +94,8 @@ impl Config {
             fire_queue_ttl_ms: env_parse("FIRE_QUEUE_TTL_MS", 120_000),
             debounce_ms: env_parse("DEBOUNCE_MS", 500),
             refractory_ms: env_parse("REFRACTORY_MS", 5_000),
+            refractory_dm_ms: env_parse("REFRACTORY_DM_MS", 1_000),
+            ssm_initial_theta: env_parse("SSM_INITIAL_THETA", 0.15),
 
             context_max_recent_events: env_parse("CONTEXT_MAX_RECENT_EVENTS", 50),
             context_max_episodes: env_parse("CONTEXT_MAX_EPISODES", 5),

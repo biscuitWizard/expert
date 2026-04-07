@@ -16,6 +16,7 @@ members = [
     "services/training-service",
     "services/discord-adapter",
     "crates/expert-tests",
+    "tools/training-import",
 ]
 
 [workspace.package]

@@ -25,12 +25,14 @@ pub struct TrainResult {
 /// updates to C and D (output matrices). The recurrence matrices A, B, and
 /// projection are frozen in this simple training loop to maintain stability.
 ///
+/// `goal_ids` maps row index -> goal ID for the checkpoint's output matrix.
 /// For full BPTT through A/B, integrate candle autodiff in a future iteration.
 pub fn run_training(
     batch: &[TrainingExample],
     base_checkpoint: &SsmCheckpoint,
     config: &TrainConfig,
     checkpoint_id: &str,
+    goal_ids: &[String],
 ) -> Result<TrainResult> {
     if batch.is_empty() {
         bail!("empty training batch");
@@ -75,8 +77,8 @@ pub fn run_training(
             epoch_loss += loss;
             count += 1;
 
-            let grad_scale = (score - target) * config.learning_rate;
-            let goal_idx = goal_index(base_checkpoint.max_k);
+            let grad_scale = (score - target) * config.learning_rate * example.label_weight;
+            let goal_idx = goal_index(&example.goal_id, goal_ids, base_checkpoint.max_k);
 
             for j in 0..base_checkpoint.hidden_dim {
                 let grad_c = grad_scale * h_final[j];
@@ -155,15 +157,19 @@ fn forward_pass(
         h = a.dot(&h) + b.dot(&x);
     }
 
-    let goal_idx = goal_index(max_k);
+    let goal_idx = 0.min(max_k.saturating_sub(1));
     let raw_score = c.row(goal_idx).dot(&h) + d[goal_idx];
     let score = sigmoid(raw_score);
 
     (score, h)
 }
 
-fn goal_index(max_k: usize) -> usize {
-    0.min(max_k.saturating_sub(1))
+fn goal_index(goal_id: &str, goal_ids: &[String], max_k: usize) -> usize {
+    goal_ids
+        .iter()
+        .position(|id| id == goal_id)
+        .unwrap_or(0)
+        .min(max_k.saturating_sub(1))
 }
 
 fn sigmoid(x: f32) -> f32 {

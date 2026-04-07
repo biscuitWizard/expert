@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::Result;
@@ -11,11 +11,12 @@ use expert_types::event::Event;
 
 use crate::rest::DiscordRestClient;
 
+const DEDUP_CAPACITY: usize = 1000;
+
 #[derive(Debug, Deserialize)]
 struct ActionPayload {
     tool_name: String,
     arguments: Value,
-    #[allow(dead_code)]
     invocation_id: Option<String>,
 }
 
@@ -37,9 +38,23 @@ pub async fn run_action_consumer(
 
     info!(stream_id, "action consumer started");
 
+    let mut seen_ids: VecDeque<String> = VecDeque::with_capacity(DEDUP_CAPACITY);
+
     loop {
         match consumer.consume::<ActionPayload>().await {
             Ok(Some((id, payload))) => {
+                if let Some(ref inv_id) = payload.invocation_id {
+                    if seen_ids.contains(inv_id) {
+                        info!(invocation_id = %inv_id, tool = %payload.tool_name, "skipping duplicate action");
+                        let _ = consumer.ack(&id).await;
+                        continue;
+                    }
+                    if seen_ids.len() >= DEDUP_CAPACITY {
+                        seen_ids.pop_front();
+                    }
+                    seen_ids.push_back(inv_id.clone());
+                }
+
                 info!(tool = %payload.tool_name, "executing domain action");
 
                 let result = execute_action(rest, &payload.tool_name, &payload.arguments).await;

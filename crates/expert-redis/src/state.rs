@@ -73,6 +73,41 @@ impl StateStore {
     pub async fn incr(&mut self, key: &str) -> RedisResult<u64> {
         self.conn.incr(key, 1u64).await
     }
+
+    /// Append a JSON-serializable value to a Redis list, then trim to `max_len`
+    /// entries and set a TTL. Used for per-channel conversation buffers.
+    pub async fn list_push_capped<T: Serialize>(
+        &mut self,
+        key: &str,
+        val: &T,
+        max_len: isize,
+        ttl_secs: u64,
+    ) -> RedisResult<()> {
+        let json = serde_json::to_string(val).map_err(|e| {
+            redis::RedisError::from((
+                redis::ErrorKind::IoError,
+                "JSON serialization failed",
+                e.to_string(),
+            ))
+        })?;
+        let _: () = self.conn.rpush(key, &json).await?;
+        let _: () = self.conn.ltrim(key, -max_len, -1).await?;
+        let _: () = self.conn.expire(key, ttl_secs as i64).await?;
+        Ok(())
+    }
+
+    /// Read all entries from a Redis list, deserializing each as JSON.
+    pub async fn list_get_all<T: DeserializeOwned>(&mut self, key: &str) -> RedisResult<Vec<T>> {
+        let raw: Vec<String> = self.conn.lrange(key, 0, -1).await?;
+        let mut out = Vec::with_capacity(raw.len());
+        for s in raw {
+            match serde_json::from_str(&s) {
+                Ok(v) => out.push(v),
+                Err(_) => continue,
+            }
+        }
+        Ok(out)
+    }
 }
 
 impl Clone for StateStore {

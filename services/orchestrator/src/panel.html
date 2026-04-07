@@ -184,6 +184,26 @@
   .badge-stale_fire_dropped { background: rgba(248,81,73,0.15); color: var(--red); }
   .badge-threshold_update { background: rgba(88,166,255,0.15); color: var(--accent); }
   .badge-panel_started { background: rgba(63,185,80,0.15); color: var(--green); }
+  .badge-invocation_complete { background: rgba(63,185,80,0.2); color: var(--green); }
+  .badge-invocation_failed { background: rgba(248,81,73,0.2); color: var(--red); }
+  .badge-svc_error { background: rgba(248,81,73,0.2); color: var(--red); }
+  .badge-svc_warn { background: rgba(211,153,34,0.2); color: var(--yellow); }
+  .badge-svc_info { background: rgba(88,166,255,0.15); color: var(--accent); }
+  .log-context {
+    font-size: 10px;
+    color: var(--text-dim);
+    margin-top: 2px;
+    font-family: var(--mono);
+  }
+  .log-context .ctx-tag {
+    display: inline-block;
+    padding: 0 4px;
+    border-radius: 2px;
+    margin-right: 4px;
+    background: rgba(255,255,255,0.04);
+  }
+  .ctx-dm { color: var(--purple); }
+  .ctx-guild { color: var(--accent); }
   .log-detail {
     display: none;
     margin-top: 4px;
@@ -457,13 +477,36 @@ function appendLogEntry(evt) {
   div.onclick = () => div.classList.toggle('expanded');
 
   const ts = new Date(evt.timestamp_ms).toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
-  const badgeClass = 'badge-' + evt.kind;
+
+  // Handle composite kinds like "svc_error:context-builder"
+  const kindBase = evt.kind.includes(':') ? evt.kind.split(':')[0] : evt.kind;
+  const kindSuffix = evt.kind.includes(':') ? evt.kind.split(':').slice(1).join(':') : '';
+  const badgeClass = 'badge-' + kindBase;
+  const badgeLabel = kindSuffix ? kindBase.replace(/_/g, ' ') + ' ' + kindSuffix : evt.kind.replace(/_/g, ' ');
 
   let html = `<span class="ts">${ts}</span>`;
-  html += `<span class="badge ${badgeClass}">${evt.kind.replace(/_/g, ' ')}</span>`;
+  html += `<span class="badge ${badgeClass}">${escHtml(badgeLabel)}</span>`;
   html += `<span>${escHtml(evt.summary)}</span>`;
+
+  // Context line for fire events showing event_type and author
   if (evt.detail) {
-    html += `<div class="log-detail">${escHtml(JSON.stringify(evt.detail, null, 2))}</div>`;
+    const d = evt.detail;
+    let contextParts = [];
+    if (d.event_type) {
+      const ctxClass = d.event_type === 'dm' ? 'ctx-dm' : 'ctx-guild';
+      contextParts.push(`<span class="ctx-tag ${ctxClass}">${escHtml(d.event_type)}</span>`);
+    }
+    if (d.author_name) {
+      contextParts.push(`<span class="ctx-tag">${escHtml(d.author_name)}</span>`);
+    }
+    if (d.response && typeof d.response === 'string') {
+      const preview = d.response.length > 120 ? d.response.substring(0, 120) + '...' : d.response;
+      contextParts.push(`<span style="color:var(--text)">${escHtml(preview)}</span>`);
+    }
+    if (contextParts.length > 0) {
+      html += `<div class="log-context">${contextParts.join(' ')}</div>`;
+    }
+    html += `<div class="log-detail">${escHtml(JSON.stringify(d, null, 2))}</div>`;
   }
   div.innerHTML = html;
   logBody.appendChild(div);

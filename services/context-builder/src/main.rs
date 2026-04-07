@@ -6,8 +6,10 @@ use tracing::{error, info, warn};
 
 use expert_config::Config;
 use expert_redis::names;
-use expert_redis::{ServiceLogger, StreamConsumer, StreamProducer};
-use expert_types::context::{ContextPackage, Episode, Exchange, SelfKnowledgeNode};
+use expert_redis::{ServiceLogger, StateStore, StreamConsumer, StreamProducer};
+use expert_types::context::{
+    ContextPackage, ConversationTurn, Episode, Exchange, SelfKnowledgeNode,
+};
 use expert_types::event::Event;
 use expert_types::signals::AssembleRequest;
 
@@ -55,6 +57,7 @@ async fn main() -> Result<()> {
     .await?;
 
     let mut rag_producer = StreamProducer::new(conn.clone(), config.stream_maxlen);
+    let mut state = StateStore::new(conn.clone());
     let mut svc_log = ServiceLogger::new(producer.clone(), "context-builder");
 
     loop {
@@ -67,7 +70,15 @@ async fn main() -> Result<()> {
                     "assembling context package"
                 );
 
-                match assemble(&req, &config, &mut conn.clone(), &mut rag_producer).await {
+                match assemble(
+                    &req,
+                    &config,
+                    &mut conn.clone(),
+                    &mut rag_producer,
+                    &mut state,
+                )
+                .await
+                {
                     Ok(package) => {
                         if let Err(e) = producer.publish(names::PACKAGES_READY, &package).await {
                             error!(error = %e, "failed to publish context package");
@@ -112,6 +123,7 @@ async fn assemble(
     config: &Config,
     conn: &mut redis::aio::MultiplexedConnection,
     rag_producer: &mut StreamProducer,
+    state: &mut StateStore,
 ) -> Result<ContextPackage> {
     // 1. XREVRANGE lookback for recent events
     let stream = names::events_embedded(&req.stream_id);
@@ -146,11 +158,24 @@ async fn assemble(
     let (retrieved_episodes, compressed_history, recent_exchanges, self_knowledge) =
         query_rag(req, config, &trigger_event, rag_producer, conn).await;
 
-    // 3. Render natural language prompt
+    // 3. Load per-channel conversation history from Redis
+    let conversation_history: Vec<ConversationTurn> = if let Some(channel_id) = trigger_event
+        .metadata
+        .get("channel_id")
+        .and_then(|v| v.as_str())
+    {
+        let conv_key = names::conversation_key(&req.stream_id, channel_id);
+        state.list_get_all(&conv_key).await.unwrap_or_default()
+    } else {
+        Vec::new()
+    };
+
+    // 4. Render natural language prompt
     let rendered_prompt = render_prompt(
         req,
         &trigger_event,
         &recent_events,
+        &conversation_history,
         &retrieved_episodes,
         &compressed_history,
         &recent_exchanges,
@@ -284,6 +309,7 @@ fn render_prompt(
     req: &AssembleRequest,
     trigger_event: &Event,
     recent_events: &[Event],
+    conversation_history: &[ConversationTurn],
     episodes: &[Episode],
     compressed_history: &Option<String>,
     recent_exchanges: &[Exchange],
@@ -344,10 +370,31 @@ fn render_prompt(
     let max_recent = config.context_max_recent_events.min(recent_events.len());
     let display_events = &recent_events[recent_events.len().saturating_sub(max_recent)..];
     for (i, event) in display_events.iter().enumerate() {
-        prompt.push_str(&format!("[{}] {}\n", i, event.raw));
+        let is_self = event
+            .metadata
+            .get("is_self")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        let prefix = if is_self { "[YOU] " } else { "" };
+        prompt.push_str(&format!("[{}] {}{}\n", i, prefix, event.raw));
         render_event_metadata(&mut prompt, event);
     }
     prompt.push('\n');
+
+    // === CONVERSATION HISTORY ===
+    if !conversation_history.is_empty() {
+        prompt.push_str("=== CONVERSATION HISTORY ===\n");
+        prompt.push_str("Recent exchanges in this channel:\n");
+        for turn in conversation_history {
+            let label = if turn.role == "assistant" {
+                "You"
+            } else {
+                "User"
+            };
+            prompt.push_str(&format!("{label}: {}\n", turn.content));
+        }
+        prompt.push('\n');
+    }
 
     // === RELEVANT PAST CONTEXT ===
     if !episodes.is_empty() {
@@ -385,23 +432,199 @@ fn render_prompt(
     prompt
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use expert_types::goal::{Goal, GoalAggregation};
+    use expert_types::signals::{BotIdentity, FireSignal, ToolDefinition};
+    use std::collections::HashMap;
+
+    fn test_config() -> Config {
+        Config::from_env()
+    }
+
+    fn test_event(raw: &str) -> Event {
+        Event {
+            id: "evt-1".to_string(),
+            stream_id: "s1".to_string(),
+            sequence: 1,
+            timestamp: 1000,
+            raw: raw.to_string(),
+            embedding: None,
+            metadata: HashMap::new(),
+        }
+    }
+
+    fn test_assemble_request(bot_identity: Option<BotIdentity>) -> AssembleRequest {
+        AssembleRequest {
+            activity_id: "act-test".to_string(),
+            stream_id: "s-test".to_string(),
+            fire_signal: FireSignal {
+                activity_id: "act-test".to_string(),
+                stream_id: "s-test".to_string(),
+                firing_goal_ids: vec!["g1".to_string()],
+                scores: vec![0.9],
+                trigger_event_seq: "1-0".to_string(),
+                last_fired_seq: None,
+                timestamp: 1000,
+            },
+            goal_tree: vec![Goal {
+                id: "g1".to_string(),
+                name: "test-goal".to_string(),
+                description: "Watch for test events".to_string(),
+                embedding: vec![0.1; 8],
+                parent_id: None,
+                children: Vec::new(),
+                aggregation: GoalAggregation::Max,
+                weights: None,
+                domain: Some("test".to_string()),
+                created_at: 1000,
+                version: 1,
+                active: true,
+            }],
+            tool_definitions: vec![ToolDefinition {
+                name: "suppress".to_string(),
+                description: "suppress tool".to_string(),
+                parameters_schema: serde_json::json!({"type": "object"}),
+                is_domain_tool: false,
+            }],
+            bot_identity,
+        }
+    }
+
+    #[test]
+    fn identity_section_with_bot_identity() {
+        let identity = BotIdentity {
+            username: "zero".to_string(),
+            user_id: "12345".to_string(),
+            display_name: Some("Zero".to_string()),
+        };
+        let req = test_assemble_request(Some(identity));
+        let event = test_event("hello world");
+        let config = test_config();
+
+        let prompt = render_prompt(&req, &event, &[], &[], &[], &None, &[], &[], &config);
+
+        assert!(prompt.contains("=== YOUR IDENTITY ==="));
+        assert!(prompt.contains("You are Zero (username=zero, user_id=12345)."));
+        assert!(prompt.contains("Events where is_self=true are your own messages."));
+    }
+
+    #[test]
+    fn identity_section_without_bot_identity() {
+        let req = test_assemble_request(None);
+        let event = test_event("hello world");
+        let config = test_config();
+
+        let prompt = render_prompt(&req, &event, &[], &[], &[], &None, &[], &[], &config);
+
+        assert!(prompt.contains("=== YOUR IDENTITY ==="));
+        assert!(prompt.contains("You are Zero.\n"));
+        assert!(!prompt.contains("username="));
+    }
+
+    #[test]
+    fn identity_section_includes_self_knowledge() {
+        let identity = BotIdentity {
+            username: "zero".to_string(),
+            user_id: "42".to_string(),
+            display_name: None,
+        };
+        let req = test_assemble_request(Some(identity));
+        let event = test_event("test");
+        let config = test_config();
+        let knowledge = vec![
+            SelfKnowledgeNode {
+                id: "sk-1".to_string(),
+                category: "core_identity".to_string(),
+                content: "I am an autonomous expert system.".to_string(),
+                embedding: Vec::new(),
+                created_at: 0,
+                updated_at: 0,
+            },
+            SelfKnowledgeNode {
+                id: "sk-2".to_string(),
+                category: "preference".to_string(),
+                content: "I enjoy discussing Rust.".to_string(),
+                embedding: Vec::new(),
+                created_at: 0,
+                updated_at: 0,
+            },
+        ];
+
+        let prompt = render_prompt(&req, &event, &[], &[], &[], &None, &[], &knowledge, &config);
+
+        assert!(prompt.contains("I am an autonomous expert system."));
+        assert!(prompt.contains("I enjoy discussing Rust."));
+    }
+
+    #[test]
+    fn identity_section_precedes_activity_context() {
+        let req = test_assemble_request(None);
+        let event = test_event("test");
+        let config = test_config();
+
+        let prompt = render_prompt(&req, &event, &[], &[], &[], &None, &[], &[], &config);
+
+        let identity_pos = prompt.find("=== YOUR IDENTITY ===").unwrap();
+        let activity_pos = prompt.find("=== ACTIVITY CONTEXT ===").unwrap();
+        assert!(
+            identity_pos < activity_pos,
+            "YOUR IDENTITY must appear before ACTIVITY CONTEXT"
+        );
+    }
+
+    #[test]
+    fn activity_context_uses_activity_id() {
+        let req = test_assemble_request(None);
+        let event = test_event("test");
+        let config = test_config();
+
+        let prompt = render_prompt(&req, &event, &[], &[], &[], &None, &[], &[], &config);
+
+        assert!(prompt.contains("activity: act-test"));
+        assert!(prompt.contains("stream: s-test"));
+    }
+
+    #[test]
+    fn empty_self_knowledge_still_renders_identity() {
+        let req = test_assemble_request(None);
+        let event = test_event("test");
+        let config = test_config();
+
+        let prompt = render_prompt(&req, &event, &[], &[], &[], &None, &[], &[], &config);
+
+        assert!(prompt.contains("=== YOUR IDENTITY ==="));
+        assert!(prompt.contains("You are Zero.\n"));
+    }
+}
+
 fn render_event_metadata(prompt: &mut String, event: &Event) {
     let m = &event.metadata;
     let keys: &[&str] = &[
+        "event_type",
         "author_id",
+        "author_name",
         "channel_id",
         "message_id",
         "guild_id",
         "user_id",
         "reply_to_message_id",
         "tool_name",
+        "is_self",
     ];
     let parts: Vec<String> = keys
         .iter()
         .filter_map(|&k| {
-            m.get(k)
-                .and_then(|v| v.as_str())
-                .map(|v| format!("{k}={v}"))
+            m.get(k).and_then(|v| {
+                if let Some(s) = v.as_str() {
+                    Some(format!("{k}={s}"))
+                } else if let Some(b) = v.as_bool() {
+                    Some(format!("{k}={b}"))
+                } else {
+                    None
+                }
+            })
         })
         .collect();
     if !parts.is_empty() {

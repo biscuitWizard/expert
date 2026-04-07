@@ -510,4 +510,59 @@ mod tests {
             ]
         );
     }
+
+    #[test]
+    fn test_build_tools_json_includes_update_self_knowledge() {
+        let def = ToolDefinition {
+            name: "update_self_knowledge".to_string(),
+            description: "Record a piece of self-knowledge about yourself.".to_string(),
+            parameters_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "content": {"type": "string"},
+                    "category": {
+                        "type": "string",
+                        "enum": ["preference", "capability", "reflection"]
+                    }
+                },
+                "required": ["content", "category"]
+            }),
+            is_domain_tool: false,
+        };
+        let json = build_tools_json(&[def]);
+        assert_eq!(json.len(), 1);
+        assert_eq!(json[0]["function"]["name"], "update_self_knowledge");
+        let params = &json[0]["function"]["parameters"];
+        assert_eq!(params["type"], "object");
+        assert!(params["properties"]["content"].is_object());
+        assert!(params["properties"]["category"].is_object());
+        let required = params["required"].as_array().unwrap();
+        assert!(required.contains(&serde_json::json!("content")));
+        assert!(required.contains(&serde_json::json!("category")));
+    }
+
+    #[test]
+    fn test_update_self_knowledge_tool_definition_serde_roundtrip() {
+        let def = ToolDefinition {
+            name: "update_self_knowledge".to_string(),
+            description: "Record self-knowledge.".to_string(),
+            parameters_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "content": {"type": "string", "description": "The statement"},
+                    "category": {"type": "string", "enum": ["preference", "capability", "reflection"]}
+                },
+                "required": ["content", "category"]
+            }),
+            is_domain_tool: false,
+        };
+        let json = serde_json::to_string(&def).unwrap();
+        let back: ToolDefinition = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.name, "update_self_knowledge");
+        assert!(!back.is_domain_tool);
+        assert_eq!(
+            back.parameters_schema["properties"]["category"]["enum"],
+            serde_json::json!(["preference", "capability", "reflection"])
+        );
+    }
 }

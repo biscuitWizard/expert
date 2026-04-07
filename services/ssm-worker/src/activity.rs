@@ -24,6 +24,8 @@ pub struct ActivityInstance {
     pub lifecycle: ActivityLifecycle,
     pub debounce_ms: u64,
     pub refractory_ms: u64,
+    pub refractory_dm_ms: u64,
+    initial_theta: f32,
 
     // Debounce state
     pending_fire_goals: Option<Vec<usize>>,
@@ -70,10 +72,12 @@ impl ActivityInstance {
             goals,
             ssm,
             feature_state,
-            theta: vec![0.5; k],
+            theta: vec![config.ssm_initial_theta; k],
             lifecycle: ActivityLifecycle::ColdStart,
             debounce_ms: config.debounce_ms,
             refractory_ms: config.refractory_ms,
+            refractory_dm_ms: config.refractory_dm_ms,
+            initial_theta: config.ssm_initial_theta,
             pending_fire_goals: None,
             pending_fire_scores: None,
             pending_fire_at: 0,
@@ -86,9 +90,17 @@ impl ActivityInstance {
     }
 
     pub fn process_event(&mut self, event: &Event, entry_id: &str, now: u64, _config: &Config) {
-        // Check refractory
+        let is_dm = event.metadata.get("event_type").and_then(|v| v.as_str()) == Some("dm");
+
+        // Check refractory -- DMs use a shorter window
         if self.lifecycle == ActivityLifecycle::Refractory {
             if now >= self.refractory_until {
+                self.lifecycle = ActivityLifecycle::Active;
+            } else if is_dm
+                && now
+                    >= self.refractory_until.saturating_sub(self.refractory_ms)
+                        + self.refractory_dm_ms
+            {
                 self.lifecycle = ActivityLifecycle::Active;
             } else {
                 // Still in refractory: update hidden state but don't score
@@ -115,9 +127,42 @@ impl ActivityInstance {
             }
         }
 
-        // Transition from ColdStart to Active after first event
+        // ColdStart: unconditionally fire for DMs (untrained SSM cannot score reliably)
         if self.lifecycle == ActivityLifecycle::ColdStart {
             self.lifecycle = ActivityLifecycle::Active;
+            if is_dm {
+                if let Some(ref emb) = event.embedding {
+                    let emb_view = ArrayView1::from(emb.as_slice());
+                    let projected = self.ssm.project_embedding(emb_view);
+                    let k = self.goals.len();
+                    let goal_views: Vec<ArrayView1<f32>> = self
+                        .goals
+                        .iter()
+                        .map(|g| ArrayView1::from(g.embedding.as_slice()))
+                        .collect();
+                    let features = compute_features(
+                        emb_view,
+                        &goal_views,
+                        &mut self.feature_state,
+                        event.timestamp,
+                        &projected,
+                    );
+                    let scores = self.ssm.update(&features, k);
+                    self.event_count += 1;
+                    self.last_entry_id = Some(entry_id.to_string());
+                    let all_goals: Vec<usize> = (0..self.goals.len()).collect();
+                    debug!(
+                        activity_id = %self.activity_id,
+                        "ColdStart DM bypass -- forcing fire"
+                    );
+                    self.lifecycle = ActivityLifecycle::PendingFire;
+                    self.pending_fire_goals = Some(all_goals);
+                    self.pending_fire_scores = Some(scores);
+                    self.pending_fire_at = now;
+                    self.pending_trigger_seq = self.last_entry_id.clone();
+                    return;
+                }
+            }
         }
 
         if self.lifecycle == ActivityLifecycle::Fired {
@@ -247,7 +292,7 @@ impl ActivityInstance {
     pub fn update_goals(&mut self, goals: Vec<Goal>) {
         let k = goals.len();
         self.goals = goals;
-        self.theta.resize(k, 0.5);
+        self.theta.resize(k, self.initial_theta);
         self.feature_state.resize_goals(k);
     }
 

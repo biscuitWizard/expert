@@ -8,8 +8,10 @@ use tracing::{error, info, warn};
 
 use expert_config::Config;
 use expert_redis::names;
-use expert_redis::{ServiceLogger, StreamConsumer, StreamProducer};
-use expert_types::context::{ActivityExchange, ContextPackage, Episode, Exchange, ToolCall};
+use expert_redis::{ServiceLogger, StateStore, StreamConsumer, StreamProducer};
+use expert_types::context::{
+    ActivityExchange, ContextPackage, ConversationTurn, Episode, Exchange, ToolCall,
+};
 use expert_types::signals::{InvocationComplete, SummarizeRequest, SummarizeResult};
 
 use ollama::{LlmClient, OllamaClient};
@@ -47,6 +49,7 @@ async fn main() -> Result<()> {
 
     let client = OllamaClient::new(&config.ollama_url, &config.llm_model);
     let mut producer = producer;
+    let mut state = StateStore::new(conn.clone());
     let mut svc_log = ServiceLogger::new(producer.clone(), "llm-gateway");
 
     loop {
@@ -59,8 +62,21 @@ async fn main() -> Result<()> {
                     "received context package, invoking LLM"
                 );
 
-                let result = invoke_llm(&client, &package, &config, &mut producer).await;
-                let success = result.is_ok();
+                let result = tokio::time::timeout(
+                    Duration::from_secs(120),
+                    invoke_llm(&client, &package, &config, &mut producer, &mut state),
+                )
+                .await;
+                let (success, result) = match result {
+                    Ok(inner) => (inner.is_ok(), inner),
+                    Err(_) => {
+                        error!(
+                            activity_id = %package.activity_id,
+                            "LLM invocation timed out after 120s"
+                        );
+                        (false, Err(anyhow::anyhow!("invocation timed out")))
+                    }
+                };
 
                 match &result {
                     Ok(_) => {
@@ -80,9 +96,34 @@ async fn main() -> Result<()> {
                     }
                 }
 
+                let response_preview = result.as_ref().ok().and_then(|resp| {
+                    if resp.is_empty() {
+                        None
+                    } else {
+                        let truncated: String = resp.chars().take(200).collect();
+                        Some(truncated)
+                    }
+                });
+
+                let event_type = package
+                    .trigger_event
+                    .metadata
+                    .get("event_type")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string());
+                let author_name = package
+                    .trigger_event
+                    .metadata
+                    .get("author_name")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string());
+
                 let complete = InvocationComplete {
                     activity_id: package.activity_id.clone(),
                     success,
+                    response_preview,
+                    event_type,
+                    author_name,
                 };
                 if let Err(e) = producer
                     .publish(names::SIGNALS_INVOCATION_COMPLETE, &complete)
@@ -150,7 +191,8 @@ async fn invoke_llm(
     package: &ContextPackage,
     config: &Config,
     producer: &mut StreamProducer,
-) -> Result<()> {
+    state: &mut StateStore,
+) -> Result<String> {
     let mut router = ToolRouter::new(package, config.llm_max_labels_per_invocation);
 
     // Build tool definitions for the LLM
@@ -158,7 +200,7 @@ async fn invoke_llm(
 
     // Initial LLM call
     let mut messages = vec![
-        serde_json::json!({"role": "system", "content": "You are Zero, an autonomous expert system. You observe live event streams, reason about what you see, and act when your goals demand it. Respond naturally and use your tools to provide feedback on invocation quality and to evolve your self-knowledge."}),
+        serde_json::json!({"role": "system", "content": "You are Zero, an autonomous expert system. You observe live event streams, reason about what you see, and act when your goals demand it. Respond naturally and use your tools to provide feedback on invocation quality and to evolve your self-knowledge.\n\nBEHAVIORAL RULES:\n- Event metadata contains Discord snowflake IDs (author_id, channel_id, message_id, etc.). Use these values EXACTLY as provided -- never fabricate or guess IDs.\n- When the trigger event has event_type=dm, respond using the send_dm tool with the author_id from the event metadata.\n- When the trigger event has event_type=message (guild channel), respond using reply_to_message with the channel_id and message_id from the event metadata.\n- Events with is_self=true are your own previous messages. Do not respond to yourself.\n- Only call suppress() when the triggering event genuinely does not warrant engagement (e.g., background noise irrelevant to your goals). If someone is talking to you, respond."}),
         serde_json::json!({"role": "user", "content": package.rendered_prompt}),
     ];
 
@@ -275,7 +317,7 @@ async fn invoke_llm(
         trigger_event_id: package.trigger_event.id.clone(),
         trigger_scores: package.trigger_scores.clone(),
         rendered_prompt: package.rendered_prompt.clone(),
-        response: final_response,
+        response: final_response.clone(),
         tool_calls: all_tool_calls,
         was_suppressed: router.was_suppressed(),
         recalled_event_indices: router.recalled_indices().to_vec(),
@@ -283,5 +325,34 @@ async fn invoke_llm(
     };
     let _ = producer.publish(names::EPISODES_WRITE, &episode).await;
 
-    Ok(())
+    // Push conversation turns to per-channel buffer for multi-turn coherence
+    if let Some(channel_id) = package
+        .trigger_event
+        .metadata
+        .get("channel_id")
+        .and_then(|v| v.as_str())
+    {
+        let conv_key = names::conversation_key(&package.trigger_event.stream_id, channel_id);
+        let user_turn = ConversationTurn {
+            role: "user".to_string(),
+            content: package.trigger_event.raw.clone(),
+            timestamp: package.trigger_event.timestamp,
+        };
+        let _ = state
+            .list_push_capped(&conv_key, &user_turn, 20, 3600)
+            .await;
+
+        if !final_response.is_empty() {
+            let assistant_turn = ConversationTurn {
+                role: "assistant".to_string(),
+                content: final_response.clone(),
+                timestamp: now,
+            };
+            let _ = state
+                .list_push_capped(&conv_key, &assistant_turn, 20, 3600)
+                .await;
+        }
+    }
+
+    Ok(final_response)
 }

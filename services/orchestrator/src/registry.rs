@@ -242,4 +242,46 @@ mod tests {
         let managed = reg.get("act-1").unwrap();
         assert_eq!(managed.state.lifecycle_state, ActivityLifecycle::ColdStart);
     }
+
+    #[test]
+    fn test_bot_identity_stored() {
+        let mut reg = ActivityRegistry::new();
+        let identity = BotIdentity {
+            username: "zero".to_string(),
+            user_id: "12345".to_string(),
+            display_name: Some("Zero Bot".to_string()),
+        };
+        reg.create_activity(
+            "act-id".into(),
+            "s1".into(),
+            "d".into(),
+            vec![make_goal("a", 4)],
+            Vec::new(),
+            EventFilter::All,
+            Some(identity),
+            "w".into(),
+        );
+        let managed = reg.get("act-id").unwrap();
+        let bot = managed.bot_identity.as_ref().unwrap();
+        assert_eq!(bot.username, "zero");
+        assert_eq!(bot.user_id, "12345");
+        assert_eq!(bot.display_name.as_deref(), Some("Zero Bot"));
+    }
+
+    #[test]
+    fn test_bot_identity_none_when_omitted() {
+        let mut reg = ActivityRegistry::new();
+        reg.create_activity(
+            "act-no-id".into(),
+            "s1".into(),
+            "d".into(),
+            vec![make_goal("a", 4)],
+            Vec::new(),
+            EventFilter::All,
+            None,
+            "w".into(),
+        );
+        let managed = reg.get("act-no-id").unwrap();
+        assert!(managed.bot_identity.is_none());
+    }
 }
