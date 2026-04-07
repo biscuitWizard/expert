@@ -35,9 +35,11 @@ async fn main() -> Result<()> {
         state_store: RwLock::new(state_store),
     });
 
-    // Spawn background workers for fire signal consumption and goal updates
+    // Spawn background workers
     workers::spawn_fire_consumer(state.clone()).await;
     workers::spawn_goal_update_consumer(state.clone()).await;
+    workers::spawn_checkpoint_consumer(state.clone()).await;
+    workers::spawn_threshold_feedback_task(state.clone()).await;
 
     // Start HTTP server
     let app = api::router(state);

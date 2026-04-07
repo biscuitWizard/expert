@@ -6,12 +6,14 @@ publish = false
 
 [dependencies]
 expert-types = { workspace = true }
+expert-ssm = { workspace = true }
 expert-redis = { workspace = true }
 expert-config = { workspace = true }
 expert-vectors = { workspace = true }
 tokio = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+ndarray = { workspace = true }
 uuid = { workspace = true }
 redis = { workspace = true }
 reqwest = { workspace = true }

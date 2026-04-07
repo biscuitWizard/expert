@@ -1,0 +1,12 @@
+[package]
+name = "expert-ssm"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+expert-types = { workspace = true }
+expert-vectors = { workspace = true }
+ndarray = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }

@@ -1,14 +1,27 @@
+mod batch;
+mod consensus;
+mod train;
+
+use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Result;
 use sqlx::PgPool;
 use sqlx::postgres::PgPoolOptions;
+use tokio::sync::RwLock;
 use tracing::{error, info, warn};
 
 use expert_config::Config;
-use expert_redis::StreamConsumer;
 use expert_redis::names;
-use expert_types::training::TrainingExample;
+use expert_redis::{StreamConsumer, StreamProducer};
+use expert_ssm::ssm::LinearSsm;
+use expert_types::signals::CheckpointAvailable;
+use expert_types::training::{TrainingBatchRequest, TrainingExample};
+
+struct TrainingState {
+    labels_since_last_slow: u64,
+    labels_since_last_medium: u64,
+}
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -16,18 +29,60 @@ async fn main() -> Result<()> {
     let config = Config::from_env();
     info!("starting training-service");
 
-    // Connect to PostgreSQL
     let pool = PgPoolOptions::new()
         .max_connections(5)
         .connect(&config.postgres_url)
         .await?;
 
-    // Run migrations
     run_migrations(&pool).await?;
     info!("database migrations complete");
 
     let conn = expert_redis::connect(&config.redis_url).await?;
+    let producer = StreamProducer::new(conn.clone(), config.stream_maxlen);
 
+    let state = Arc::new(RwLock::new(TrainingState {
+        labels_since_last_slow: 0,
+        labels_since_last_medium: 0,
+    }));
+
+    // Ensure checkpoint directory exists
+    std::fs::create_dir_all(&config.checkpoint_dir).ok();
+
+    // Spawn batch request consumer
+    {
+        let pool = pool.clone();
+        let conn = conn.clone();
+        let mut producer = producer.clone();
+        tokio::spawn(async move {
+            if let Err(e) = run_batch_consumer(conn, pool, &mut producer).await {
+                error!(error = %e, "batch consumer exited");
+            }
+        });
+    }
+
+    // Spawn SLOW training background task
+    {
+        let pool = pool.clone();
+        let state = state.clone();
+        let config = config.clone();
+        let mut producer = producer.clone();
+        tokio::spawn(async move {
+            run_slow_training_loop(pool, state, &config, &mut producer).await;
+        });
+    }
+
+    // Spawn MEDIUM few-shot background task
+    {
+        let pool = pool.clone();
+        let state = state.clone();
+        let config = config.clone();
+        let mut producer = producer.clone();
+        tokio::spawn(async move {
+            run_medium_fewshot_loop(pool, state, &config, &mut producer).await;
+        });
+    }
+
+    // Main label consumer
     let mut consumer = StreamConsumer::new(
         conn,
         names::LABELS_WRITE.to_string(),
@@ -51,6 +106,30 @@ async fn main() -> Result<()> {
                             source = ?example.label_source,
                             "training example stored"
                         );
+
+                        let label_str = serde_json::to_string(&example.label).unwrap_or_default();
+                        let source_str =
+                            serde_json::to_string(&example.label_source).unwrap_or_default();
+                        if let Err(e) = consensus::run_consensus(
+                            &pool,
+                            &example.goal_id,
+                            example.goal_version as i32,
+                            example.created_at as i64,
+                            &label_str,
+                            &source_str,
+                            config.consensus_threshold,
+                            config.consensus_time_window_ms,
+                        )
+                        .await
+                        {
+                            warn!(error = %e, "consensus scoring failed");
+                        }
+
+                        {
+                            let mut s = state.write().await;
+                            s.labels_since_last_slow += 1;
+                            s.labels_since_last_medium += 1;
+                        }
                     }
                     Err(e) => {
                         error!(error = %e, example_id = %example.id, "failed to store training example");
@@ -61,6 +140,248 @@ async fn main() -> Result<()> {
             Err(e) => {
                 warn!(error = %e, "label consumer error");
                 tokio::time::sleep(Duration::from_secs(1)).await;
+            }
+        }
+    }
+}
+
+async fn run_batch_consumer(
+    conn: redis::aio::MultiplexedConnection,
+    pool: PgPool,
+    producer: &mut StreamProducer,
+) -> Result<()> {
+    let mut consumer = StreamConsumer::new(
+        conn,
+        names::REQUESTS_TRAINING_BATCH.to_string(),
+        "training-batch".to_string(),
+        "batch-0".to_string(),
+        500,
+    )
+    .await?;
+
+    loop {
+        match consumer.consume::<TrainingBatchRequest>().await {
+            Ok(Some((id, req))) => {
+                let _ = consumer.ack(&id).await;
+                match batch::select_batch(&pool, &req).await {
+                    Ok(result) => {
+                        if let Err(e) = producer
+                            .publish(names::RESULTS_TRAINING_BATCH, &result)
+                            .await
+                        {
+                            error!(error = %e, "failed to publish training batch result");
+                        }
+                    }
+                    Err(e) => {
+                        error!(error = %e, request_id = %req.request_id, "batch selection failed");
+                    }
+                }
+            }
+            Ok(None) => {}
+            Err(e) => {
+                warn!(error = %e, "batch consumer error");
+                tokio::time::sleep(Duration::from_secs(1)).await;
+            }
+        }
+    }
+}
+
+async fn run_slow_training_loop(
+    pool: PgPool,
+    state: Arc<RwLock<TrainingState>>,
+    config: &Config,
+    producer: &mut StreamProducer,
+) {
+    loop {
+        tokio::time::sleep(Duration::from_secs(config.training_interval_secs)).await;
+
+        let should_train = {
+            let s = state.read().await;
+            s.labels_since_last_slow >= config.training_label_threshold
+        };
+
+        if !should_train {
+            continue;
+        }
+
+        info!("SLOW training: starting offline retraining");
+
+        let req = TrainingBatchRequest {
+            request_id: uuid::Uuid::new_v4().to_string(),
+            domain: None,
+            goal_id: None,
+            batch_size: config.training_batch_size,
+            min_confidence: 0.3,
+        };
+
+        let batch_result = match batch::select_batch(&pool, &req).await {
+            Ok(b) => b,
+            Err(e) => {
+                warn!(error = %e, "SLOW training: batch selection failed");
+                continue;
+            }
+        };
+
+        if batch_result.examples.is_empty() {
+            info!("SLOW training: no examples available, skipping");
+            continue;
+        }
+
+        let base_ssm = LinearSsm::new(
+            config.embedding_dim,
+            config.ssm_hidden_dim,
+            config.ssm_max_k,
+            5,
+        );
+        let base_ckpt = base_ssm.save_checkpoint("base");
+
+        let checkpoint_id = uuid::Uuid::new_v4().to_string();
+        let train_config = train::TrainConfig {
+            epochs: config.training_epochs,
+            learning_rate: config.training_learning_rate,
+            gradient_clip: config.training_gradient_clip,
+        };
+
+        match train::run_training(
+            &batch_result.examples,
+            &base_ckpt,
+            &train_config,
+            &checkpoint_id,
+        ) {
+            Ok(result) => {
+                let path = format!("{}/{}.json", config.checkpoint_dir, checkpoint_id);
+                if let Ok(json) = serde_json::to_string_pretty(&result.checkpoint) {
+                    if let Err(e) = std::fs::write(&path, &json) {
+                        error!(error = %e, "failed to write checkpoint file");
+                        continue;
+                    }
+                }
+
+                let notification = CheckpointAvailable {
+                    checkpoint_id: checkpoint_id.clone(),
+                    domain: result.checkpoint.domain.clone(),
+                    path: path.clone(),
+                    created_at: result.checkpoint.created_at,
+                    timescale: Some("slow".to_string()),
+                };
+
+                if let Err(e) = producer
+                    .publish(names::CHECKPOINTS_AVAILABLE, &notification)
+                    .await
+                {
+                    error!(error = %e, "failed to publish checkpoint notification");
+                } else {
+                    info!(
+                        checkpoint_id,
+                        loss = result.final_loss,
+                        examples = result.examples_seen,
+                        "SLOW training: checkpoint saved and published"
+                    );
+                    let mut s = state.write().await;
+                    s.labels_since_last_slow = 0;
+                }
+            }
+            Err(e) => {
+                error!(error = %e, "SLOW training: training failed");
+            }
+        }
+    }
+}
+
+async fn run_medium_fewshot_loop(
+    pool: PgPool,
+    state: Arc<RwLock<TrainingState>>,
+    config: &Config,
+    producer: &mut StreamProducer,
+) {
+    loop {
+        tokio::time::sleep(Duration::from_secs(30)).await;
+
+        let should_train = {
+            let s = state.read().await;
+            s.labels_since_last_medium >= config.medium_label_threshold
+        };
+
+        if !should_train {
+            continue;
+        }
+
+        info!("MEDIUM training: starting few-shot adaptation");
+
+        let req = TrainingBatchRequest {
+            request_id: uuid::Uuid::new_v4().to_string(),
+            domain: None,
+            goal_id: None,
+            batch_size: config.medium_batch_size,
+            min_confidence: 0.5,
+        };
+
+        let batch_result = match batch::select_batch(&pool, &req).await {
+            Ok(b) => b,
+            Err(e) => {
+                warn!(error = %e, "MEDIUM training: batch selection failed");
+                continue;
+            }
+        };
+
+        if batch_result.examples.is_empty() {
+            continue;
+        }
+
+        let base_ssm = LinearSsm::new(
+            config.embedding_dim,
+            config.ssm_hidden_dim,
+            config.ssm_max_k,
+            5,
+        );
+        let base_ckpt = base_ssm.save_checkpoint("base");
+
+        let checkpoint_id = uuid::Uuid::new_v4().to_string();
+        let train_config = train::TrainConfig {
+            epochs: 1,
+            learning_rate: config.medium_learning_rate,
+            gradient_clip: config.training_gradient_clip,
+        };
+
+        match train::run_training(
+            &batch_result.examples,
+            &base_ckpt,
+            &train_config,
+            &checkpoint_id,
+        ) {
+            Ok(result) => {
+                let path = format!("{}/{}.json", config.checkpoint_dir, checkpoint_id);
+                if let Ok(json) = serde_json::to_string_pretty(&result.checkpoint) {
+                    if let Err(e) = std::fs::write(&path, &json) {
+                        error!(error = %e, "failed to write medium checkpoint");
+                        continue;
+                    }
+                }
+
+                let notification = CheckpointAvailable {
+                    checkpoint_id: checkpoint_id.clone(),
+                    domain: result.checkpoint.domain.clone(),
+                    path: path.clone(),
+                    created_at: result.checkpoint.created_at,
+                    timescale: Some("medium".to_string()),
+                };
+
+                if let Err(e) = producer
+                    .publish(names::CHECKPOINTS_AVAILABLE, &notification)
+                    .await
+                {
+                    error!(error = %e, "failed to publish medium checkpoint");
+                } else {
+                    info!(
+                        checkpoint_id,
+                        "MEDIUM training: few-shot checkpoint published"
+                    );
+                    let mut s = state.write().await;
+                    s.labels_since_last_medium = 0;
+                }
+            }
+            Err(e) => {
+                error!(error = %e, "MEDIUM training: training failed");
             }
         }
     }
@@ -93,7 +414,6 @@ async fn run_migrations(pool: &PgPool) -> Result<()> {
     .execute(pool)
     .await?;
 
-    // Index for batch queries
     sqlx::query(
         r#"
         CREATE INDEX IF NOT EXISTS idx_training_domain_label
@@ -107,6 +427,15 @@ async fn run_migrations(pool: &PgPool) -> Result<()> {
         r#"
         CREATE INDEX IF NOT EXISTS idx_training_goal
         ON training_examples (goal_id, goal_version)
+        "#,
+    )
+    .execute(pool)
+    .await?;
+
+    sqlx::query(
+        r#"
+        CREATE INDEX IF NOT EXISTS idx_training_consensus
+        ON training_examples (goal_id, goal_version, created_at)
         "#,
     )
     .execute(pool)

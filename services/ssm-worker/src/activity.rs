@@ -7,8 +7,8 @@ use expert_types::event::Event;
 use expert_types::goal::Goal;
 use expert_types::signals::FireSignal;
 
-use crate::features::{FeatureState, compute_features};
-use crate::ssm::{LinearSsm, SsmCore};
+use expert_ssm::features::{FeatureState, compute_features};
+use expert_ssm::ssm::{LinearSsm, SsmCore};
 
 const NUM_SCALAR_FEATURES: usize = 3; // drift, surprise, delta_t (silences are per-goal, handled dynamically)
 
@@ -242,5 +242,25 @@ impl ActivityInstance {
         self.goals = goals;
         self.theta.resize(k, 0.5);
         self.feature_state.resize_goals(k);
+    }
+
+    pub fn load_checkpoint(
+        &mut self,
+        ckpt: &expert_ssm::checkpoint::SsmCheckpoint,
+    ) -> anyhow::Result<()> {
+        self.ssm.load_checkpoint(ckpt)?;
+        self.lifecycle = ActivityLifecycle::ColdStart;
+        Ok(())
+    }
+
+    pub fn apply_threshold_feedback(&mut self, suppress_rate: f32, recall_rate: f32) {
+        let config = expert_ssm::threshold::ThresholdConfig::default();
+        expert_ssm::threshold::update_thresholds(
+            &mut self.theta,
+            suppress_rate,
+            recall_rate,
+            &[],
+            &config,
+        );
     }
 }

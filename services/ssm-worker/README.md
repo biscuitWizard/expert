@@ -39,8 +39,11 @@ Per activity, the worker owns:
 
 ## Dependencies
 
+- **[expert-ssm](../../crates/expert-ssm/)** — shared crate for SSM recurrence (`ssm.rs`), input features (`features.rs`), checkpoint serialization, and threshold logic (moved out of the service binary for reuse with training-service).
 - **Redis** — embedded event streams and durable activity state
 - **Orchestrator** — registration, capacity, assignments, suspend/resume, goal updates
+
+Per-worker **commands** on `commands.worker.{worker_id}` include lifecycle as today plus **`checkpoint_reload`** (load a published checkpoint into the worker’s model state) and **`threshold_update`** (apply new threshold parameters from training or orchestration).
 
 ## Statefulness
 

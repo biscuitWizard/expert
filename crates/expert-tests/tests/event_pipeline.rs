@@ -1,5 +1,7 @@
 use expert_redis::StreamProducer;
 use expert_tests::*;
+use expert_types::context::{ActivityExchange, Exchange, ToolCall};
+use expert_types::training::{TrainingBatch, TrainingBatchRequest};
 
 #[tokio::test]
 async fn test_event_serialization_roundtrip() {
@@ -121,4 +123,67 @@ async fn test_training_example_roundtrip() {
     assert_eq!(deserialized.activity_id, example.activity_id);
     assert_eq!(deserialized.label, example.label);
     assert_eq!(deserialized.label_source, example.label_source);
+}
+
+#[test]
+fn activity_exchange_serde_roundtrip() {
+    let original = ActivityExchange {
+        activity_id: "act-pipe".to_string(),
+        exchange: Exchange {
+            timestamp: 42,
+            rendered_prompt: "rendered".to_string(),
+            response: "resp".to_string(),
+            tool_calls: vec![ToolCall {
+                tool_name: "suppress".to_string(),
+                arguments: serde_json::json!({}),
+                result: None,
+            }],
+        },
+    };
+
+    let json = serde_json::to_string(&original).expect("serialize ActivityExchange");
+    let back: ActivityExchange = serde_json::from_str(&json).expect("deserialize ActivityExchange");
+    assert_eq!(back.activity_id, original.activity_id);
+    assert_eq!(back.exchange.response, original.exchange.response);
+}
+
+#[test]
+fn training_batch_request_serde_roundtrip() {
+    let original = TrainingBatchRequest {
+        request_id: "req-xyz".to_string(),
+        domain: Some("test".to_string()),
+        goal_id: Some("goal-1".to_string()),
+        batch_size: 16,
+        min_confidence: 0.75,
+    };
+
+    let json = serde_json::to_string(&original).expect("serialize TrainingBatchRequest");
+    let back: TrainingBatchRequest =
+        serde_json::from_str(&json).expect("deserialize TrainingBatchRequest");
+
+    assert_eq!(back.request_id, original.request_id);
+    assert_eq!(back.domain, original.domain);
+    assert_eq!(back.goal_id, original.goal_id);
+    assert_eq!(back.batch_size, original.batch_size);
+    assert_eq!(back.min_confidence, original.min_confidence);
+}
+
+#[test]
+fn training_batch_serde_roundtrip() {
+    let ex = fake_training_example();
+    let original = TrainingBatch {
+        request_id: "batch-req-1".to_string(),
+        examples: vec![ex.clone()],
+        positive_count: 1,
+        negative_count: 0,
+    };
+
+    let json = serde_json::to_string(&original).expect("serialize TrainingBatch");
+    let back: TrainingBatch = serde_json::from_str(&json).expect("deserialize TrainingBatch");
+
+    assert_eq!(back.request_id, original.request_id);
+    assert_eq!(back.examples.len(), 1);
+    assert_eq!(back.examples[0].id, ex.id);
+    assert_eq!(back.positive_count, original.positive_count);
+    assert_eq!(back.negative_count, original.negative_count);
 }

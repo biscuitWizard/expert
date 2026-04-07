@@ -8,7 +8,7 @@ API layer over the RAG graph database for the Expert attention fabric. The servi
 - **Semantic retrieval**: Return top-K episodes similar to query embeddings, with summaries suitable for context assembly.
 - **Graph traversal**: Answer structural queries over goals, domains, activities, episodes, and patterns as required by upstream consumers.
 - **Consolidation**: Background job that clusters recent episodes semantically, maintains **Pattern** nodes, and links episodes via **INSTANCE_OF** edges.
-- **Session history**: Append raw exchanges per activity, trigger summarization when logs exceed thresholds, store compressed narratives, and expose history to the context builder at assembly time.
+- **Session history**: Consume the centralized **`exchanges.all`** stream, append each exchange to Redis **`exchanges:{activity_id}`**, trigger summarization when thresholds are met (with deduplication via **`summarize_pending:{activity_id}`**), consume **`results.summarize`** to persist compressed narratives into **`history:{activity_id}`**, and answer **`get_history`** (and related queries) with **real** compressed history plus **recent** exchanges not yet summarized.
 - **Goal versioning**: Maintain versioned goals and associate training or generation-time data with the goal version active when that data was produced.
 
 ## Owns
@@ -27,7 +27,8 @@ API layer over the RAG graph database for the Expert attention fabric. The servi
 | `goals.write` | Goal create/update events driving versioned goal state |
 | `episodes.write` | Episode ingestion and metadata updates |
 | `events.exchange.{activity_id}` | Per-activity raw LLM exchange events for session history |
-| `results.summarize` | Compressed narrative output from the summarization pipeline |
+| `exchanges.all` | Centralized exchange stream; primary input for Redis-backed session history and summarize triggers |
+| `results.summarize` | Compressed narrative output from the summarization pipeline (consumer stores into `history:{activity_id}`) |
 
 ## Publishes
 

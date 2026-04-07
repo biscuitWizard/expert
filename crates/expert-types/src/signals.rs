@@ -123,4 +123,6 @@ pub struct CheckpointAvailable {
     /// Filesystem path or object store key for the checkpoint.
     pub path: String,
     pub created_at: u64,
+    /// "slow" or "medium" -- which training timescale produced this checkpoint.
+    pub timescale: Option<String>,
 }

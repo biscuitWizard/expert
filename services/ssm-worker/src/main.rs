@@ -1,6 +1,4 @@
 mod activity;
-mod features;
-mod ssm;
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -287,6 +285,73 @@ async fn handle_command(state: &Arc<RwLock<WorkerState>>, cmd: serde_json::Value
             if let Some(activity) = ws.activities.get_mut(activity_id) {
                 activity.update_goals(goals);
                 info!(activity_id, "goal matrix updated");
+            }
+        }
+        "checkpoint_reload" => {
+            let checkpoint_path = cmd.get("path").and_then(|v| v.as_str()).unwrap_or("");
+            let activity_ids: Vec<String> = cmd
+                .get("activity_ids")
+                .and_then(|v| serde_json::from_value(v.clone()).ok())
+                .unwrap_or_default();
+
+            if checkpoint_path.is_empty() {
+                warn!("checkpoint_reload: missing path");
+                return;
+            }
+
+            match std::fs::read_to_string(checkpoint_path) {
+                Ok(json) => {
+                    match serde_json::from_str::<expert_ssm::checkpoint::SsmCheckpoint>(&json) {
+                        Ok(ckpt) => {
+                            let mut ws = state.write().await;
+                            let mut loaded = 0usize;
+                            for aid in &activity_ids {
+                                if let Some(activity) = ws.activities.get_mut(aid) {
+                                    if let Err(e) = activity.load_checkpoint(&ckpt) {
+                                        warn!(error = %e, activity_id = aid, "checkpoint load failed for activity");
+                                    } else {
+                                        loaded += 1;
+                                    }
+                                }
+                            }
+                            info!(
+                                checkpoint_id = ?cmd.get("checkpoint_id"),
+                                loaded,
+                                total = activity_ids.len(),
+                                "checkpoint loaded"
+                            );
+                        }
+                        Err(e) => {
+                            error!(error = %e, "failed to parse checkpoint JSON");
+                        }
+                    }
+                }
+                Err(e) => {
+                    error!(error = %e, path = checkpoint_path, "failed to read checkpoint file");
+                }
+            }
+        }
+        "threshold_update" => {
+            let activity_id = cmd
+                .get("activity_id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let suppress_rate = cmd
+                .get("suppress_rate")
+                .and_then(|v| v.as_f64())
+                .unwrap_or(0.0) as f32;
+            let recall_rate = cmd
+                .get("recall_rate")
+                .and_then(|v| v.as_f64())
+                .unwrap_or(0.0) as f32;
+
+            let mut ws = state.write().await;
+            if let Some(activity) = ws.activities.get_mut(activity_id) {
+                activity.apply_threshold_feedback(suppress_rate, recall_rate);
+                info!(
+                    activity_id,
+                    suppress_rate, recall_rate, "thresholds updated"
+                );
             }
         }
         other => {

@@ -185,7 +185,7 @@ Adaptive updates are **asynchronous** to the sub-ms inner loop; they run on feed
 For **suspend** and operational migration, the worker serializes **full `ActivityState`** to Redis:
 
 ```
-SET activity:{activity_id} -> serialized_blob
+SET state:{activity_id} -> serialized_blob
 ```
 
 The blob includes: hidden state, thresholds, FSM state, debounce timers metadata, feature statistics, goal-matrix snapshot handle, and any worker-local counters required for resume. Target: complete persistence in **< 100 ms**.

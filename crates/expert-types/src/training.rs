@@ -48,3 +48,22 @@ pub struct TrainingExample {
     pub confidence: f32,
     pub consensus_count: u32,
 }
+
+/// Request a balanced batch of training examples.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TrainingBatchRequest {
+    pub request_id: String,
+    pub domain: Option<String>,
+    pub goal_id: Option<String>,
+    pub batch_size: usize,
+    pub min_confidence: f32,
+}
+
+/// A balanced batch of training examples.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TrainingBatch {
+    pub request_id: String,
+    pub examples: Vec<TrainingExample>,
+    pub positive_count: usize,
+    pub negative_count: usize,
+}

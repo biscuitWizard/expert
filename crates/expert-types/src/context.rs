@@ -58,6 +58,14 @@ pub struct Pattern {
     pub updated_at: u64,
 }
 
+/// Wrapper carrying an exchange with its activity ID, for the centralized
+/// `exchanges.all` stream where multiple activities share a single stream.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ActivityExchange {
+    pub activity_id: String,
+    pub exchange: Exchange,
+}
+
 /// Server-side context assembly object. The `rendered_prompt` is what
 /// the LLM receives; all other fields are retained server-side for
 /// tool call resolution (e.g. recall() needs access to event embeddings).

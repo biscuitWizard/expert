@@ -1,4 +1,5 @@
 use expert_tests::*;
+use expert_types::training::TrainingExample;
 use sqlx::PgPool;
 use sqlx::postgres::PgPoolOptions;
 
@@ -186,4 +187,17 @@ async fn test_query_by_domain_and_label() {
     assert_eq!(positives.0, 1);
 
     cleanup(&pool).await;
+}
+
+/// Consensus field shape matches serde expectations (no DB required).
+#[test]
+fn training_example_consensus_count_serde_roundtrip() {
+    let mut ex = fake_training_example();
+    ex.consensus_count = 42;
+
+    let json = serde_json::to_string(&ex).expect("serialize TrainingExample");
+    let back: TrainingExample = serde_json::from_str(&json).expect("deserialize TrainingExample");
+
+    assert_eq!(back.consensus_count, 42);
+    assert_eq!(back.id, ex.id);
 }

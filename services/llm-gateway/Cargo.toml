@@ -15,3 +15,5 @@ serde_json = { workspace = true }
 uuid = { workspace = true }
 anyhow = { workspace = true }
 reqwest = { workspace = true }
+redis = { workspace = true }
+async-trait = "0.1"

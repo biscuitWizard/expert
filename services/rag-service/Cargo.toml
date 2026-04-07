@@ -15,4 +15,5 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 uuid = { workspace = true }
 anyhow = { workspace = true }
+redis = { workspace = true }
 qdrant-client = "1"

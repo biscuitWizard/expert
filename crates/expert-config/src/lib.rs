@@ -15,6 +15,7 @@ pub struct Config {
 
     pub embedding_dim: usize,
     pub ssm_hidden_dim: usize,
+    pub ssm_max_k: usize,
 
     pub encoder_max_batch: usize,
     pub encoder_flush_ms: u64,
@@ -31,6 +32,26 @@ pub struct Config {
     pub llm_max_labels_per_invocation: usize,
 
     pub stream_maxlen: usize,
+
+    // Session summarization
+    pub exchange_summarize_threshold: usize,
+    pub exchange_keep_after_summarize: usize,
+
+    // Consensus scoring
+    pub consensus_threshold: u32,
+    pub consensus_time_window_ms: u64,
+
+    // Training / adaptation
+    pub checkpoint_dir: String,
+    pub training_interval_secs: u64,
+    pub training_label_threshold: u64,
+    pub training_batch_size: usize,
+    pub training_epochs: usize,
+    pub training_learning_rate: f32,
+    pub training_gradient_clip: f32,
+    pub medium_label_threshold: u64,
+    pub medium_batch_size: usize,
+    pub medium_learning_rate: f32,
 }
 
 impl Config {
@@ -51,6 +72,7 @@ impl Config {
 
             embedding_dim: env_parse("EMBEDDING_DIM", 4096),
             ssm_hidden_dim: env_parse("SSM_HIDDEN_DIM", 256),
+            ssm_max_k: env_parse("SSM_MAX_K", 16),
 
             encoder_max_batch: env_parse("ENCODER_MAX_BATCH", 32),
             encoder_flush_ms: env_parse("ENCODER_FLUSH_MS", 10),
@@ -67,6 +89,23 @@ impl Config {
             llm_max_labels_per_invocation: env_parse("LLM_MAX_LABELS", 3),
 
             stream_maxlen: env_parse("STREAM_MAXLEN", 10_000),
+
+            exchange_summarize_threshold: env_parse("EXCHANGE_SUMMARIZE_THRESHOLD", 10),
+            exchange_keep_after_summarize: env_parse("EXCHANGE_KEEP_AFTER_SUMMARIZE", 3),
+
+            consensus_threshold: env_parse("CONSENSUS_THRESHOLD", 2),
+            consensus_time_window_ms: env_parse("CONSENSUS_TIME_WINDOW_MS", 30_000),
+
+            checkpoint_dir: env_or("CHECKPOINT_DIR", "./checkpoints"),
+            training_interval_secs: env_parse("TRAINING_INTERVAL_SECS", 3600),
+            training_label_threshold: env_parse("TRAINING_LABEL_THRESHOLD", 100),
+            training_batch_size: env_parse("TRAINING_BATCH_SIZE", 500),
+            training_epochs: env_parse("TRAINING_EPOCHS", 3),
+            training_learning_rate: env_parse("TRAINING_LEARNING_RATE", 0.001),
+            training_gradient_clip: env_parse("TRAINING_GRADIENT_CLIP", 1.0),
+            medium_label_threshold: env_parse("MEDIUM_LABEL_THRESHOLD", 20),
+            medium_batch_size: env_parse("MEDIUM_BATCH_SIZE", 10),
+            medium_learning_rate: env_parse("MEDIUM_LEARNING_RATE", 0.01),
         }
     }
 }

@@ -18,7 +18,7 @@ pub struct LinearSsm {
     pub c: Array2<f32>,          // [max_k, hidden_dim]
     pub d: Array1<f32>,          // [max_k]
     pub h: Array1<f32>,          // [hidden_dim]
-    input_dim: usize,
+    pub input_dim: usize,
 }
 
 impl LinearSsm {

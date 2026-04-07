@@ -31,7 +31,7 @@ expert goal list <activity-id>       # show goal tree for an activity
 
 ## Configuration
 
-The CLI reads the orchestrator URL from the `EXPERT_ORCHESTRATOR_URL` environment variable (default: `http://localhost:8081`).
+The CLI reads the orchestrator URL from the `ORCHESTRATOR_URL` environment variable (default: `http://127.0.0.1:3000`).
 
 ## Dependencies
 

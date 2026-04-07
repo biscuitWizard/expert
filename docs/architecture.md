@@ -2,7 +2,7 @@
 
 Expert is a semantic attention system for live event-driven AI agents. It answers: when should an LLM be invoked on a continuous event stream, what context should it receive, and how does invocation quality improve over time?
 
-The system decomposes into 8 Rust microservices, a Python CLI, 4 shared library crates, and 5 infrastructure containers, connected by asynchronous message-passing via Redis Streams.
+The system decomposes into 8 Rust microservices, a Python CLI, 5 shared library crates, and 5 infrastructure containers, connected by asynchronous message-passing via Redis Streams.
 
 ## Services
 
@@ -26,6 +26,7 @@ The system decomposes into 8 Rust microservices, a Python CLI, 4 shared library 
 | [expert-redis](../crates/expert-redis/) | Redis client wrappers, stream naming schema, consumer/producer helpers |
 | [expert-vectors](../crates/expert-vectors/) | Embedding vector math: cosine similarity, EMA, centroid, Mahalanobis distance |
 | [expert-config](../crates/expert-config/) | Configuration loading, logging setup |
+| [expert-ssm](../crates/expert-ssm/) | SSM model (`LinearSsm`), feature computation, checkpoint serialization, and adaptive threshold logic — shared between ssm-worker (inference) and training-service (training) |
 
 ## Infrastructure
 
@@ -77,14 +78,7 @@ LLM calls update_goal()
 
 ### Session history summarization (background)
 
-```
-llm-gateway publishes raw exchange to events.exchange.{activity_id}
-  -> rag-service appends to raw log
-  -> [if log exceeds threshold] -> requests.summarize
-  -> llm-gateway calls llamacpp for summarization
-  -> results.summarize
-  -> rag-service stores compressed narrative
-```
+The gateway **dual-publishes** each post-invocation exchange to the per-activity stream `events.exchange.{activity_id}` and to the centralized stream `exchanges.all`. The **rag-service** consumes `exchanges.all`, appends the raw exchange to the Redis list `exchanges:{activity_id}`, and sets `summarize_pending:{activity_id}` when a summarize run should run (deduplicating overlapping triggers). The **llm-gateway** consumes `requests.summarize`, calls llamacpp, and publishes `results.summarize`. The **rag-service** consumes `results.summarize`, writes the compressed narrative to `history:{activity_id}`, and clears the pending flag as appropriate. **Context assembly** (`get_history` and related queries) returns **real** compressed history from `history:{activity_id}` **plus** recent exchanges not yet folded into a summary, so the context builder sees a coherent tail of the session.
 
 ## Key Architectural Decisions
 
@@ -119,7 +113,7 @@ These constraints are preserved across all implementation decisions (from spec S
 2. The SSM is reactive, not initiative.
 3. The SSM never calls the LLM.
 4. The LLM never sees raw stream data or embedding vectors.
-5. Goals are independent of activities (deleting an activity preserves its goals in RAG).
+5. Goals are atomic and per-activity. Goal records persist in the RAG graph after activity deletion for training data provenance.
 6. All training labels are immutable once committed.
 7. Suppress and recall are advisory, not binding.
 8. Goal embeddings are versioned.
@@ -136,3 +130,4 @@ These constraints are preserved across all implementation decisions (from spec S
 - [RAG database: Qdrant](decisions/rag-db-selection.md)
 - [SSM model: minimal linear SSM (Option A)](decisions/ssm-architecture.md)
 - [Encoder model: Qwen3-Embedding-8B via llamacpp](decisions/encoder-selection.md)
+- [Training approach: shared SSM crate and gradient computation](decisions/training-approach.md)

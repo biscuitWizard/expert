@@ -34,6 +34,11 @@ pub const LABELS_WRITE: &str = "labels.write";
 pub const EPISODES_WRITE: &str = "episodes.write";
 pub const GOALS_WRITE: &str = "goals.write";
 pub const CHECKPOINTS_AVAILABLE: &str = "checkpoints.available";
+pub const EXCHANGES_ALL: &str = "exchanges.all";
+pub const REQUESTS_TRAINING_BATCH: &str = "requests.training_batch";
+pub const RESULTS_TRAINING_BATCH: &str = "results.training_batch";
+pub const REQUESTS_FEWSHOT: &str = "requests.fewshot";
+pub const RESULTS_FEWSHOT: &str = "results.fewshot";
 
 /// Redis key patterns for state store.
 pub fn state_key(activity_id: &str) -> String {
@@ -50,6 +55,18 @@ pub fn assignment_key(activity_id: &str) -> String {
 
 pub fn fire_queue_key(activity_id: &str) -> String {
     format!("fire_queue:{activity_id}")
+}
+
+pub fn exchanges_key(activity_id: &str) -> String {
+    format!("exchanges:{activity_id}")
+}
+
+pub fn history_key(activity_id: &str) -> String {
+    format!("history:{activity_id}")
+}
+
+pub fn summarize_pending_key(activity_id: &str) -> String {
+    format!("summarize_pending:{activity_id}")
 }
 
 #[cfg(test)]
@@ -117,6 +134,11 @@ mod tests {
         assert!(!EPISODES_WRITE.is_empty());
         assert!(!GOALS_WRITE.is_empty());
         assert!(!CHECKPOINTS_AVAILABLE.is_empty());
+        assert!(!EXCHANGES_ALL.is_empty());
+        assert!(!REQUESTS_TRAINING_BATCH.is_empty());
+        assert!(!RESULTS_TRAINING_BATCH.is_empty());
+        assert!(!REQUESTS_FEWSHOT.is_empty());
+        assert!(!RESULTS_FEWSHOT.is_empty());
     }
 
     #[test]
@@ -136,8 +158,31 @@ mod tests {
             EPISODES_WRITE,
             GOALS_WRITE,
             CHECKPOINTS_AVAILABLE,
+            EXCHANGES_ALL,
+            REQUESTS_TRAINING_BATCH,
+            RESULTS_TRAINING_BATCH,
+            REQUESTS_FEWSHOT,
+            RESULTS_FEWSHOT,
         ] {
             assert!(name.contains('.'), "{name} should use dotted namespace");
         }
+    }
+
+    #[test]
+    fn test_exchanges_key_format() {
+        assert_eq!(exchanges_key("act-abc"), "exchanges:act-abc");
+    }
+
+    #[test]
+    fn test_history_key_format() {
+        assert_eq!(history_key("act-abc"), "history:act-abc");
+    }
+
+    #[test]
+    fn test_summarize_pending_key_format() {
+        assert_eq!(
+            summarize_pending_key("act-abc"),
+            "summarize_pending:act-abc"
+        );
     }
 }

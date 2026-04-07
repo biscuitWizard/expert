@@ -10,6 +10,7 @@ All streams follow a dotted namespace convention:
 - `events.raw.{stream_id}` -- Raw events from stream-ingestion. Consumed by encoder (consumer group: `encoder`).
 - `events.embedded.{stream_id}` -- Embedded events from encoder. Consumed by ssm-workers (consumer group per worker: `worker-{worker_id}`). Range-read by context-builder via XREVRANGE.
 - `events.exchange.{activity_id}` -- Raw LLM exchanges post-invocation. Consumed by rag-service (consumer group: `rag`).
+- `exchanges.all` -- Centralized stream of all LLM exchanges (by activity). Consumed by rag-service (consumer group: `rag`) for Redis-backed session history and summarization triggers.
 
 ### Signals
 - `signals.fire` -- Fire signals from ssm-workers. Consumed by orchestrator (consumer group: `orchestrator`).
@@ -19,6 +20,8 @@ All streams follow a dotted namespace convention:
 - `requests.encode` / `results.encode` -- On-demand encoding. Consumed by encoder (consumer group: `encoder-od`) / orchestrator (filtered by request_id).
 - `queries.rag` / `results.rag` -- RAG graph queries. Consumed by rag-service (consumer group: `rag`) / context-builder (filtered by request_id).
 - `requests.summarize` / `results.summarize` -- Session history summarization. Consumed by llm-gateway (consumer group: `llm-summarize`) / rag-service (filtered by request_id).
+- `requests.training_batch` / `results.training_batch` -- Batch training API for SSM training jobs. Consumed by training-service (consumer group: `training`) / orchestrator or callers (filtered by request_id).
+- `requests.fewshot` / `results.fewshot` -- Few-shot data API for MEDIUM meta-learning adaptation. Consumed by training-service (consumer group: `training`) / callers (filtered by request_id).
 
 ### Write Streams
 - `packages.ready` -- Assembled context packages. Consumed by llm-gateway (consumer group: `llm`).
@@ -46,6 +49,7 @@ All streams use MAXLEN for bounded memory. Defaults:
 | `packages.ready` | 100 | Context packages are large; consumed immediately |
 | `labels.write` | 10,000 | Training labels consumed by training-service |
 | `events.exchange.*` | 1,000 | Raw exchanges consumed by rag-service |
+| `exchanges.all` | 1,000 | Centralized exchange fan-in; consumed by rag-service |
 | `actions.*` | 1,000 | Domain tool calls consumed immediately |
 | `commands.worker.*` | 100 | Lifecycle commands consumed immediately |
 
@@ -58,6 +62,9 @@ Redis is also used as a key-value store for fast state access:
 - `assignment:{activity_id}` -- Worker assignment (worker_id string). Written by orchestrator.
 - `worker:{worker_id}:heartbeat` -- Last heartbeat timestamp. Written by ssm-worker, read by orchestrator.
 - `fire_queue:{activity_id}` -- Pending fire signal for an activity (JSON). Written/replaced by orchestrator.
+- `exchanges:{activity_id}` -- Redis list of raw exchanges for the activity (append-on-ingest from centralized exchange stream).
+- `history:{activity_id}` -- Compressed session history blob for the activity (after summarization completes).
+- `summarize_pending:{activity_id}` -- Flag to deduplicate concurrent summarize requests for the same activity.
 
 ## Message Serialization
 
@@ -67,7 +74,7 @@ All messages are serialized as JSON. Each Redis Stream entry has a single field 
 XADD events.raw.mud-01 MAXLEN ~10000 * data '{"id":"...","stream_id":"mud-01",...}'
 ```
 
-## Helper API (planned)
+## Helper API
 
 ```rust
 pub struct StreamProducer { /* ... */ }

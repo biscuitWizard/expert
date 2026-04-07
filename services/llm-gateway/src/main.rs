@@ -9,9 +9,10 @@ use tracing::{error, info, warn};
 use expert_config::Config;
 use expert_redis::names;
 use expert_redis::{StreamConsumer, StreamProducer};
-use expert_types::context::{ContextPackage, Episode, Exchange, ToolCall};
+use expert_types::context::{ActivityExchange, ContextPackage, Episode, Exchange, ToolCall};
+use expert_types::signals::{SummarizeRequest, SummarizeResult};
 
-use llamacpp::LlamaCppClient;
+use llamacpp::{LlamaCppClient, LlmClient};
 use tools::ToolRouter;
 
 #[tokio::main]
@@ -21,7 +22,19 @@ async fn main() -> Result<()> {
     info!("starting llm-gateway");
 
     let conn = expert_redis::connect(&config.redis_url).await?;
-    let mut producer = StreamProducer::new(conn.clone(), config.stream_maxlen);
+    let producer = StreamProducer::new(conn.clone(), config.stream_maxlen);
+
+    // Spawn summarization consumer
+    {
+        let conn = conn.clone();
+        let mut sum_producer = producer.clone();
+        let client = LlamaCppClient::new(&config.llamacpp_url);
+        tokio::spawn(async move {
+            if let Err(e) = run_summarize_consumer(conn, &client, &mut sum_producer).await {
+                error!(error = %e, "summarize consumer exited");
+            }
+        });
+    }
 
     let mut consumer = StreamConsumer::new(
         conn.clone(),
@@ -33,6 +46,7 @@ async fn main() -> Result<()> {
     .await?;
 
     let client = LlamaCppClient::new(&config.llamacpp_url);
+    let mut producer = producer;
 
     loop {
         match consumer.consume::<ContextPackage>().await {
@@ -62,8 +76,53 @@ async fn main() -> Result<()> {
     }
 }
 
+async fn run_summarize_consumer(
+    conn: redis::aio::MultiplexedConnection,
+    client: &dyn LlmClient,
+    producer: &mut StreamProducer,
+) -> Result<()> {
+    let mut consumer = StreamConsumer::new(
+        conn,
+        names::REQUESTS_SUMMARIZE.to_string(),
+        "llm-sum".to_string(),
+        "sum-0".to_string(),
+        500,
+    )
+    .await?;
+
+    loop {
+        match consumer.consume::<SummarizeRequest>().await {
+            Ok(Some((id, req))) => {
+                let _ = consumer.ack(&id).await;
+                info!(activity_id = %req.activity_id, "summarizing session history");
+
+                match client.summarize(&req.raw_text).await {
+                    Ok(narrative) => {
+                        let result = SummarizeResult {
+                            activity_id: req.activity_id,
+                            session_id: req.session_id,
+                            compressed_narrative: narrative,
+                        };
+                        if let Err(e) = producer.publish(names::RESULTS_SUMMARIZE, &result).await {
+                            error!(error = %e, "failed to publish summarize result");
+                        }
+                    }
+                    Err(e) => {
+                        error!(error = %e, "summarization call failed");
+                    }
+                }
+            }
+            Ok(None) => {}
+            Err(e) => {
+                warn!(error = %e, "summarize consumer error");
+                tokio::time::sleep(Duration::from_secs(1)).await;
+            }
+        }
+    }
+}
+
 async fn invoke_llm(
-    client: &LlamaCppClient,
+    client: &dyn LlmClient,
     package: &ContextPackage,
     config: &Config,
     producer: &mut StreamProducer,
@@ -169,6 +228,14 @@ async fn invoke_llm(
 
     let exchange_stream = names::events_exchange(&package.activity_id);
     let _ = producer.publish(&exchange_stream, &exchange).await;
+
+    let activity_exchange = ActivityExchange {
+        activity_id: package.activity_id.clone(),
+        exchange: exchange.clone(),
+    };
+    let _ = producer
+        .publish(names::EXCHANGES_ALL, &activity_exchange)
+        .await;
 
     // Publish episode
     let episode = Episode {

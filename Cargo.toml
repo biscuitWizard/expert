@@ -5,6 +5,7 @@ members = [
     "crates/expert-redis",
     "crates/expert-vectors",
     "crates/expert-config",
+    "crates/expert-ssm",
     "services/stream-ingestion",
     "services/encoder",
     "services/orchestrator",
@@ -26,6 +27,7 @@ expert-types = { path = "crates/expert-types" }
 expert-redis = { path = "crates/expert-redis" }
 expert-vectors = { path = "crates/expert-vectors" }
 expert-config = { path = "crates/expert-config" }
+expert-ssm = { path = "crates/expert-ssm" }
 
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

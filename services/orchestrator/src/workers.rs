@@ -7,7 +7,8 @@ use expert_redis::StreamConsumer;
 use expert_redis::names;
 use expert_types::activity::ActivityLifecycle;
 use expert_types::signals::{
-    AssembleRequest, EncodeRequest, EncodeResult, FireSignal, GoalUpdateRequest,
+    AssembleRequest, CheckpointAvailable, EncodeRequest, EncodeResult, FireSignal,
+    GoalUpdateRequest,
 };
 
 use crate::AppState;
@@ -293,6 +294,153 @@ async fn handle_goal_update(state: &AppState, req: GoalUpdateRequest) {
     }
 
     info!(activity_id = %req.activity_id, "goal update propagated");
+}
+
+/// Consume checkpoint notifications and dispatch reload commands to affected workers.
+pub async fn spawn_checkpoint_consumer(state: Arc<AppState>) {
+    let conn = match expert_redis::connect(&state.config.redis_url).await {
+        Ok(c) => c,
+        Err(e) => {
+            error!(error = %e, "failed to connect for checkpoint consumer");
+            return;
+        }
+    };
+
+    tokio::spawn(async move {
+        let mut consumer = match StreamConsumer::new(
+            conn,
+            names::CHECKPOINTS_AVAILABLE.to_string(),
+            "orchestrator-ckpt".to_string(),
+            "orch-ckpt-0".to_string(),
+            500,
+        )
+        .await
+        {
+            Ok(c) => c,
+            Err(e) => {
+                error!(error = %e, "failed to create checkpoint consumer");
+                return;
+            }
+        };
+
+        loop {
+            match consumer.consume::<CheckpointAvailable>().await {
+                Ok(Some((id, notification))) => {
+                    let _ = consumer.ack(&id).await;
+                    info!(
+                        checkpoint_id = %notification.checkpoint_id,
+                        domain = ?notification.domain,
+                        timescale = ?notification.timescale,
+                        "received checkpoint notification"
+                    );
+                    handle_checkpoint(&state, notification).await;
+                }
+                Ok(None) => {}
+                Err(e) => {
+                    warn!(error = %e, "checkpoint consumer error");
+                    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                }
+            }
+        }
+    });
+}
+
+async fn handle_checkpoint(state: &AppState, notification: CheckpointAvailable) {
+    let registry = state.registry.read().await;
+
+    // Group affected activities by worker_id
+    let mut worker_activities: std::collections::HashMap<String, Vec<String>> =
+        std::collections::HashMap::new();
+
+    for (activity_id, entry) in &registry.activities {
+        let domain_match = match (&notification.domain, &entry.state.domain) {
+            (Some(d), domain) => d == domain,
+            (None, _) => true,
+        };
+
+        if domain_match {
+            worker_activities
+                .entry(entry.worker_id.clone())
+                .or_default()
+                .push(activity_id.clone());
+        }
+    }
+
+    drop(registry);
+
+    let mut producer = state.producer.write().await;
+    for (worker_id, activity_ids) in &worker_activities {
+        let cmd = serde_json::json!({
+            "type": "checkpoint_reload",
+            "checkpoint_id": notification.checkpoint_id,
+            "path": notification.path,
+            "activity_ids": activity_ids,
+        });
+
+        if let Err(e) = producer
+            .publish(&names::commands_worker(worker_id), &cmd)
+            .await
+        {
+            error!(error = %e, worker_id, "failed to dispatch checkpoint reload");
+        } else {
+            info!(
+                worker_id,
+                activities = activity_ids.len(),
+                "dispatched checkpoint reload"
+            );
+        }
+    }
+}
+
+/// Spawn a consumer that dispatches threshold update commands to workers
+/// after invocation cycles complete.
+pub async fn spawn_threshold_feedback_task(state: Arc<AppState>) {
+    tokio::spawn(async move {
+        loop {
+            tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+
+            let registry = state.registry.read().await;
+            let mut updates: Vec<(String, String, f32, f32)> = Vec::new();
+
+            for (activity_id, entry) in &registry.activities {
+                if entry.state.invocation_count == 0 {
+                    continue;
+                }
+
+                let suppress_rate =
+                    entry.state.suppress_count as f32 / entry.state.invocation_count as f32;
+                let recall_rate =
+                    entry.state.recall_count as f32 / entry.state.invocation_count as f32;
+
+                updates.push((
+                    activity_id.clone(),
+                    entry.worker_id.clone(),
+                    suppress_rate,
+                    recall_rate,
+                ));
+            }
+
+            drop(registry);
+
+            if updates.is_empty() {
+                continue;
+            }
+
+            let mut producer = state.producer.write().await;
+            for (activity_id, worker_id, suppress_rate, recall_rate) in &updates {
+                let cmd = serde_json::json!({
+                    "type": "threshold_update",
+                    "activity_id": activity_id,
+                    "suppress_rate": suppress_rate,
+                    "recall_rate": recall_rate,
+                });
+
+                let _ = producer
+                    .publish(&names::commands_worker(worker_id), &cmd)
+                    .await;
+            }
+        }
+    });
 }
 
 async fn poll_encode_result_bg(state: &AppState, request_id: &str) -> Option<Vec<f32>> {
