@@ -120,4 +120,6 @@ GitHub Actions runs on every push to `main` and on pull requests:
 
 ## License
 
-MIT
+This project is licensed under the [PolyForm Noncommercial 1.0.0](LICENSE) license. You are free to use, modify, and distribute this software for any **noncommercial** purpose.
+
+**Commercial use** requires a separate license. Contact biscuitWizard for details.
