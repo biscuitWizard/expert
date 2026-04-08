@@ -4,10 +4,10 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
-use axum::routing::{delete, get, post};
+use axum::routing::{delete, get, post, put};
 use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 use expert_redis::names;
 use expert_types::event_filter::EventFilter;
@@ -23,6 +23,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/health", get(health))
         .route("/activities", post(create_activity))
         .route("/activities", get(list_activities))
+        .route("/activities/bootstrap", put(bootstrap_activity))
         .route("/activities/{id}", get(get_activity))
         .route("/activities/{id}", delete(delete_activity))
         .route("/activities/{id}/filter", axum::routing::put(update_filter))
@@ -227,6 +228,287 @@ async fn create_activity(
         Json(serde_json::to_value(response).unwrap()),
     )
         .into_response()
+}
+
+#[derive(Deserialize)]
+struct BootstrapRequest {
+    stream_id: String,
+    domain: String,
+    goals: Vec<GoalInput>,
+    #[serde(default)]
+    tool_definitions: Vec<ToolDefinition>,
+    #[serde(default)]
+    event_filter: EventFilter,
+    #[serde(default)]
+    bot_identity: Option<BotIdentity>,
+}
+
+async fn bootstrap_activity(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<BootstrapRequest>,
+) -> impl IntoResponse {
+    // Check if an activity for this stream+domain already exists in-memory
+    {
+        let registry = state.registry.read().await;
+        for managed in registry.list() {
+            if managed.state.stream_id == req.stream_id && managed.state.domain == req.domain {
+                let activity_id = managed.state.activity_id.clone();
+                let worker_id = managed.worker_id.clone();
+                let goals = managed.goals.clone();
+                drop(registry);
+
+                // Re-assign to worker in case it restarted
+                let cmd = serde_json::json!({
+                    "type": "assign",
+                    "activity_id": activity_id,
+                    "stream_id": req.stream_id,
+                    "goals": goals,
+                    "event_filter": req.event_filter,
+                });
+                let mut producer = state.producer.write().await;
+                let _ = producer
+                    .publish(&names::commands_worker(&worker_id), &cmd)
+                    .await;
+
+                info!(activity_id = %activity_id, "bootstrap: reusing in-memory activity");
+                return (
+                    StatusCode::OK,
+                    Json(serde_json::json!({
+                        "activity_id": activity_id,
+                        "reused": true,
+                        "source": "memory",
+                    })),
+                )
+                    .into_response();
+            }
+        }
+    }
+
+    // Query RAG for existing goals in this domain
+    let existing_goals = query_rag_goals(&state, &req.domain).await;
+
+    let (goals, reused) = if !existing_goals.is_empty() {
+        info!(
+            domain = %req.domain,
+            count = existing_goals.len(),
+            "bootstrap: loading existing goals from Qdrant"
+        );
+        (existing_goals, true)
+    } else {
+        info!(
+            domain = %req.domain,
+            "bootstrap: no existing goals, creating defaults"
+        );
+        let mut new_goals = Vec::new();
+        for goal_input in &req.goals {
+            let request_id = uuid::Uuid::new_v4().to_string();
+            let encode_req = EncodeRequest {
+                request_id: request_id.clone(),
+                text: goal_input.description.clone(),
+            };
+
+            {
+                let mut producer = state.producer.write().await;
+                if let Err(e) = producer.publish(names::REQUESTS_ENCODE, &encode_req).await {
+                    error!(error = %e, "failed to publish encode request");
+                    return (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        Json(serde_json::json!({"error": "encoding failed"})),
+                    )
+                        .into_response();
+                }
+            }
+
+            let embedding = match poll_encode_result(&state, &request_id).await {
+                Some(emb) => emb,
+                None => {
+                    error!("timeout waiting for goal encoding");
+                    return (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        Json(serde_json::json!({"error": "encoding timeout"})),
+                    )
+                        .into_response();
+                }
+            };
+
+            let now = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_millis() as u64;
+
+            new_goals.push(Goal {
+                id: uuid::Uuid::new_v4().to_string(),
+                name: goal_input.name.clone(),
+                description: goal_input.description.clone(),
+                embedding,
+                parent_id: None,
+                children: Vec::new(),
+                aggregation: GoalAggregation::Max,
+                weights: None,
+                domain: Some(req.domain.clone()),
+                created_at: now,
+                version: 1,
+                active: true,
+            });
+        }
+
+        // Persist new goals to RAG
+        for goal in &new_goals {
+            let mut producer = state.producer.write().await;
+            let _ = producer.publish(names::GOALS_WRITE, goal).await;
+        }
+
+        (new_goals, false)
+    };
+
+    let activity_id = uuid::Uuid::new_v4().to_string();
+    let mut all_tools = feedback_tool_definitions();
+    all_tools.extend(req.tool_definitions);
+
+    {
+        let mut registry = state.registry.write().await;
+        registry.create_activity(
+            activity_id.clone(),
+            req.stream_id.clone(),
+            req.domain.clone(),
+            goals.clone(),
+            all_tools,
+            req.event_filter.clone(),
+            req.bot_identity.clone(),
+            MVP_WORKER_ID.to_string(),
+        );
+    }
+
+    // Persist to Redis
+    {
+        let registry = state.registry.read().await;
+        if let Some(managed) = registry.get(&activity_id) {
+            let mut store = state.state_store.write().await;
+            let _ = store
+                .set_json(&names::state_key(&activity_id), &managed.state)
+                .await;
+            let _ = store
+                .set_str(&names::assignment_key(&activity_id), MVP_WORKER_ID)
+                .await;
+        }
+    }
+
+    // Assign to worker
+    {
+        let cmd = serde_json::json!({
+            "type": "assign",
+            "activity_id": activity_id,
+            "stream_id": req.stream_id,
+            "goals": goals,
+            "event_filter": req.event_filter,
+        });
+        let mut producer = state.producer.write().await;
+        let _ = producer
+            .publish(&names::commands_worker(MVP_WORKER_ID), &cmd)
+            .await;
+    }
+
+    info!(
+        activity_id = %activity_id,
+        reused,
+        "bootstrap: activity registered"
+    );
+
+    state
+        .event_log
+        .push(
+            "activity_bootstrap",
+            format!(
+                "Bootstrap {} on {} (goals {})",
+                &activity_id[..8],
+                req.stream_id,
+                if reused { "loaded" } else { "created" }
+            ),
+            Some(serde_json::json!({
+                "activity_id": activity_id,
+                "domain": req.domain,
+                "reused": reused,
+            })),
+        )
+        .await;
+
+    (
+        StatusCode::OK,
+        Json(serde_json::json!({
+            "activity_id": activity_id,
+            "reused": reused,
+            "source": if reused { "qdrant" } else { "created" },
+        })),
+    )
+        .into_response()
+}
+
+/// Query the RAG service for existing goals by domain via Redis streams.
+async fn query_rag_goals(state: &AppState, domain: &str) -> Vec<Goal> {
+    let request_id = uuid::Uuid::new_v4().to_string();
+    let query = serde_json::json!({
+        "request_id": request_id,
+        "query_type": "get_goals_by_domain",
+        "domain": domain,
+    });
+
+    {
+        let mut producer = state.producer.write().await;
+        if let Err(e) = producer.publish(names::QUERIES_RAG, &query).await {
+            warn!(error = %e, "failed to publish RAG goals query");
+            return Vec::new();
+        }
+    }
+
+    // Poll results.rag for the response
+    let conn = match expert_redis::connect(&state.config.redis_url).await {
+        Ok(c) => c,
+        Err(_) => return Vec::new(),
+    };
+
+    let mut consumer = match expert_redis::StreamConsumer::new(
+        conn,
+        names::RESULTS_RAG.to_string(),
+        format!("orch-rag-goals-{request_id}"),
+        "orch-0".to_string(),
+        500,
+    )
+    .await
+    {
+        Ok(c) => c,
+        Err(_) => return Vec::new(),
+    };
+
+    #[derive(Deserialize)]
+    struct RagGoalResult {
+        request_id: String,
+        #[serde(default)]
+        goals: Vec<Goal>,
+        #[serde(default)]
+        error: Option<String>,
+    }
+
+    for _ in 0..10 {
+        match consumer.consume::<RagGoalResult>().await {
+            Ok(Some((id, result))) => {
+                let _ = consumer.ack(&id).await;
+                if result.request_id == request_id {
+                    if let Some(err) = result.error {
+                        warn!(error = %err, "RAG goals query returned error");
+                        return Vec::new();
+                    }
+                    return result.goals;
+                }
+            }
+            Ok(None) => {}
+            Err(_) => {
+                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            }
+        }
+    }
+
+    warn!("timeout waiting for RAG goals query");
+    Vec::new()
 }
 
 async fn list_activities(State(state): State<Arc<AppState>>) -> impl IntoResponse {

@@ -1,5 +1,7 @@
+use std::collections::VecDeque;
+
 use ndarray::ArrayView1;
-use tracing::debug;
+use tracing::{debug, info};
 
 use expert_config::Config;
 use expert_types::activity::ActivityLifecycle;
@@ -12,6 +14,12 @@ use expert_ssm::features::{FeatureState, compute_features};
 use expert_ssm::ssm::{LinearSsm, SsmCore};
 
 const NUM_SCALAR_FEATURES: usize = 3; // drift, surprise, delta_t (silences are per-goal, handled dynamically)
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum ScoringMode {
+    ColdCosine,
+    SsmActive,
+}
 
 pub struct ActivityInstance {
     pub activity_id: String,
@@ -40,6 +48,15 @@ pub struct ActivityInstance {
     last_fired_seq: Option<String>,
     last_entry_id: Option<String>,
     event_count: u64,
+
+    // Cold-start scoring
+    pub scoring_mode: ScoringMode,
+    pub fire_count: u64,
+    cold_start_dm_fires: u64,
+    calibration_window: usize,
+    calibration_threshold: f32,
+    cosine_history: VecDeque<Vec<f32>>,
+    ssm_score_history: VecDeque<Vec<f32>>,
 }
 
 impl ActivityInstance {
@@ -86,6 +103,13 @@ impl ActivityInstance {
             last_fired_seq: None,
             last_entry_id: None,
             event_count: 0,
+            scoring_mode: ScoringMode::ColdCosine,
+            fire_count: 0,
+            cold_start_dm_fires: config.cold_start_dm_fires,
+            calibration_window: config.ssm_calibration_window,
+            calibration_threshold: config.ssm_calibration_threshold,
+            cosine_history: VecDeque::new(),
+            ssm_score_history: VecDeque::new(),
         }
     }
 
@@ -103,100 +127,31 @@ impl ActivityInstance {
             {
                 self.lifecycle = ActivityLifecycle::Active;
             } else {
-                // Still in refractory: update hidden state but don't score
-                if let Some(ref emb) = event.embedding {
-                    let emb_view = ArrayView1::from(emb.as_slice());
-                    let projected = self.ssm.project_embedding(emb_view);
-                    let k = self.goals.len();
-                    let goal_views: Vec<ArrayView1<f32>> = self
-                        .goals
-                        .iter()
-                        .map(|g| ArrayView1::from(g.embedding.as_slice()))
-                        .collect();
-                    let features = compute_features(
-                        emb_view,
-                        &goal_views,
-                        &mut self.feature_state,
-                        event.timestamp,
-                        &projected,
-                    );
-                    let _ = self.ssm.update(&features, k);
-                }
+                self.update_hidden_state(event, now);
                 self.event_count += 1;
                 return;
             }
         }
 
-        // ColdStart: unconditionally fire for DMs (untrained SSM cannot score reliably)
+        // ColdStart: transition to Active (first event only)
         if self.lifecycle == ActivityLifecycle::ColdStart {
             self.lifecycle = ActivityLifecycle::Active;
-            if is_dm {
-                if let Some(ref emb) = event.embedding {
-                    let emb_view = ArrayView1::from(emb.as_slice());
-                    let projected = self.ssm.project_embedding(emb_view);
-                    let k = self.goals.len();
-                    let goal_views: Vec<ArrayView1<f32>> = self
-                        .goals
-                        .iter()
-                        .map(|g| ArrayView1::from(g.embedding.as_slice()))
-                        .collect();
-                    let features = compute_features(
-                        emb_view,
-                        &goal_views,
-                        &mut self.feature_state,
-                        event.timestamp,
-                        &projected,
-                    );
-                    let scores = self.ssm.update(&features, k);
-                    self.event_count += 1;
-                    self.last_entry_id = Some(entry_id.to_string());
-                    let all_goals: Vec<usize> = (0..self.goals.len()).collect();
-                    debug!(
-                        activity_id = %self.activity_id,
-                        "ColdStart DM bypass -- forcing fire"
-                    );
-                    self.lifecycle = ActivityLifecycle::PendingFire;
-                    self.pending_fire_goals = Some(all_goals);
-                    self.pending_fire_scores = Some(scores);
-                    self.pending_fire_at = now;
-                    self.pending_trigger_seq = self.last_entry_id.clone();
-                    return;
-                }
-            }
         }
 
         if self.lifecycle == ActivityLifecycle::Fired {
-            // Activity is in Fired state (waiting for LLM invocation to complete)
-            // Still update hidden state
-            if let Some(ref emb) = event.embedding {
-                let emb_view = ArrayView1::from(emb.as_slice());
-                let projected = self.ssm.project_embedding(emb_view);
-                let k = self.goals.len();
-                let goal_views: Vec<ArrayView1<f32>> = self
-                    .goals
-                    .iter()
-                    .map(|g| ArrayView1::from(g.embedding.as_slice()))
-                    .collect();
-                let features = compute_features(
-                    emb_view,
-                    &goal_views,
-                    &mut self.feature_state,
-                    event.timestamp,
-                    &projected,
-                );
-                let _ = self.ssm.update(&features, k);
-            }
+            self.update_hidden_state(event, now);
             self.event_count += 1;
             return;
         }
 
         let embedding = match &event.embedding {
             Some(emb) => emb,
-            None => return, // Skip events without embeddings
+            None => return,
         };
 
         let emb_view = ArrayView1::from(embedding.as_slice());
         let projected = self.ssm.project_embedding(emb_view);
+        let hidden_dim = projected.len();
         let k = self.goals.len();
 
         let goal_views: Vec<ArrayView1<f32>> = self
@@ -213,12 +168,52 @@ impl ActivityInstance {
             &projected,
         );
 
-        let scores = self.ssm.update(&features, k);
-        self.event_count += 1;
+        // Extract cosine similarities from the feature vector
+        let cosine_scores: Vec<f32> = features[hidden_dim..hidden_dim + k].to_vec();
 
+        // Always run SSM to keep hidden state warm
+        let ssm_scores = self.ssm.update(&features, k);
+        self.event_count += 1;
         self.last_entry_id = Some(entry_id.to_string());
 
-        // Threshold check (only in Active state, not during pending debounce)
+        // Track score history for calibration
+        if self.scoring_mode == ScoringMode::ColdCosine {
+            self.cosine_history.push_back(cosine_scores.clone());
+            self.ssm_score_history.push_back(ssm_scores.clone());
+            while self.cosine_history.len() > self.calibration_window {
+                self.cosine_history.pop_front();
+                self.ssm_score_history.pop_front();
+            }
+            self.check_ssm_calibration();
+        }
+
+        // Choose scores based on scoring mode
+        let scores = match self.scoring_mode {
+            ScoringMode::ColdCosine => cosine_scores,
+            ScoringMode::SsmActive => ssm_scores,
+        };
+
+        // DM bypass during cold start: force-fire all DMs until we have enough data
+        if is_dm
+            && self.fire_count < self.cold_start_dm_fires
+            && self.lifecycle == ActivityLifecycle::Active
+            && self.pending_fire_goals.is_none()
+        {
+            let all_goals: Vec<usize> = (0..k).collect();
+            debug!(
+                activity_id = %self.activity_id,
+                fire_count = self.fire_count,
+                "cold-start DM bypass -- forcing fire"
+            );
+            self.lifecycle = ActivityLifecycle::PendingFire;
+            self.pending_fire_goals = Some(all_goals);
+            self.pending_fire_scores = Some(scores);
+            self.pending_fire_at = now;
+            self.pending_trigger_seq = self.last_entry_id.clone();
+            return;
+        }
+
+        // Normal threshold check
         if self.lifecycle == ActivityLifecycle::Active && self.pending_fire_goals.is_none() {
             let mut triggered = Vec::new();
             for (i, (&score, &threshold)) in scores.iter().zip(self.theta.iter()).enumerate() {
@@ -232,6 +227,7 @@ impl ActivityInstance {
                     activity_id = %self.activity_id,
                     triggered = ?triggered,
                     scores = ?scores,
+                    mode = ?self.scoring_mode,
                     "threshold crossed, entering debounce"
                 );
                 self.lifecycle = ActivityLifecycle::PendingFire;
@@ -239,6 +235,91 @@ impl ActivityInstance {
                 self.pending_fire_scores = Some(scores);
                 self.pending_fire_at = now;
                 self.pending_trigger_seq = self.last_entry_id.clone();
+            }
+        }
+    }
+
+    fn update_hidden_state(&mut self, event: &Event, now: u64) {
+        if let Some(ref emb) = event.embedding {
+            let emb_view = ArrayView1::from(emb.as_slice());
+            let projected = self.ssm.project_embedding(emb_view);
+            let k = self.goals.len();
+            let goal_views: Vec<ArrayView1<f32>> = self
+                .goals
+                .iter()
+                .map(|g| ArrayView1::from(g.embedding.as_slice()))
+                .collect();
+            let features = compute_features(
+                emb_view,
+                &goal_views,
+                &mut self.feature_state,
+                if now > 0 {
+                    event.timestamp
+                } else {
+                    event.timestamp
+                },
+                &projected,
+            );
+            let _ = self.ssm.update(&features, k);
+        }
+    }
+
+    fn check_ssm_calibration(&mut self) {
+        if self.cosine_history.len() < self.calibration_window {
+            return;
+        }
+
+        let k = self.goals.len();
+        if k == 0 {
+            return;
+        }
+
+        // Compute per-goal Pearson correlation between cosine and SSM scores
+        let n = self.cosine_history.len() as f32;
+        let mut total_corr = 0.0f32;
+        let mut valid_goals = 0;
+
+        for goal_idx in 0..k {
+            let mut sum_x = 0.0f32;
+            let mut sum_y = 0.0f32;
+            let mut sum_xy = 0.0f32;
+            let mut sum_x2 = 0.0f32;
+            let mut sum_y2 = 0.0f32;
+
+            for (cos_scores, ssm_scores) in self
+                .cosine_history
+                .iter()
+                .zip(self.ssm_score_history.iter())
+            {
+                let x = cos_scores.get(goal_idx).copied().unwrap_or(0.0);
+                let y = ssm_scores.get(goal_idx).copied().unwrap_or(0.0);
+                sum_x += x;
+                sum_y += y;
+                sum_xy += x * y;
+                sum_x2 += x * x;
+                sum_y2 += y * y;
+            }
+
+            let denom = ((n * sum_x2 - sum_x * sum_x) * (n * sum_y2 - sum_y * sum_y)).sqrt();
+            if denom > 1e-8 {
+                let corr = (n * sum_xy - sum_x * sum_y) / denom;
+                total_corr += corr;
+                valid_goals += 1;
+            }
+        }
+
+        if valid_goals > 0 {
+            let avg_corr = total_corr / valid_goals as f32;
+            if avg_corr >= self.calibration_threshold {
+                info!(
+                    activity_id = %self.activity_id,
+                    correlation = avg_corr,
+                    window = self.calibration_window,
+                    "SSM calibrated -- transitioning to SSM scoring"
+                );
+                self.scoring_mode = ScoringMode::SsmActive;
+                self.cosine_history.clear();
+                self.ssm_score_history.clear();
             }
         }
     }
@@ -274,12 +355,14 @@ impl ActivityInstance {
             trigger_event_seq: trigger_seq,
             last_fired_seq: self.last_fired_seq.clone(),
             timestamp: now,
+            operator_forced: false,
         };
 
         // Transition to refractory after fire
         self.lifecycle = ActivityLifecycle::Refractory;
         self.refractory_until = now + self.refractory_ms;
         self.last_fired_seq = self.last_entry_id.clone();
+        self.fire_count += 1;
 
         Some(signal)
     }

@@ -32,6 +32,11 @@ pub fn router(state: Arc<AppState>, qdrant: Option<Qdrant>) -> Router {
         .route("/panel/api/status", get(system_status))
         .route("/panel/api/activities", get(list_activities))
         .route("/panel/api/activities/{id}", get(get_activity))
+        .route(
+            "/panel/api/activities/{id}/force-fire",
+            post(force_fire_activity),
+        )
+        .route("/panel/api/metrics", get(pipeline_metrics))
         .route("/panel/api/qdrant/collections", get(list_collections))
         .route("/panel/api/qdrant/collections/{name}", get(collection_info))
         .route(
@@ -422,6 +427,97 @@ async fn scroll_points(
                 .into_response()
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// Force-fire endpoint
+// ---------------------------------------------------------------------------
+
+async fn force_fire_activity(
+    State(state): State<Arc<PanelState>>,
+    Path(id): Path<String>,
+) -> impl IntoResponse {
+    use expert_redis::names;
+    use expert_types::activity::ActivityLifecycle;
+    use expert_types::signals::{AssembleRequest, FireSignal};
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as u64;
+
+    let mut registry = state.app.registry.write().await;
+    let activity = match registry.activities.get_mut(&id) {
+        Some(a) => a,
+        None => return StatusCode::NOT_FOUND.into_response(),
+    };
+
+    let signal = FireSignal {
+        activity_id: id.clone(),
+        stream_id: activity.state.stream_id.clone(),
+        firing_goal_ids: activity.goals.iter().map(|g| g.id.clone()).collect(),
+        scores: vec![1.0; activity.goals.len()],
+        trigger_event_seq: "operator-forced".to_string(),
+        last_fired_seq: None,
+        timestamp: now,
+        operator_forced: true,
+    };
+
+    activity.state.lifecycle_state = ActivityLifecycle::Fired;
+    activity.state.invocation_count += 1;
+    activity.pending_fire = Some(crate::registry::PendingFire {
+        signal: signal.clone(),
+        received_at: now,
+    });
+
+    let assemble_req = AssembleRequest {
+        activity_id: id.clone(),
+        stream_id: signal.stream_id.clone(),
+        fire_signal: signal,
+        goal_tree: activity.goals.clone(),
+        tool_definitions: activity.tool_definitions.clone(),
+        bot_identity: activity.bot_identity.clone(),
+    };
+
+    drop(registry);
+
+    let mut producer = state.app.producer.write().await;
+    if let Err(e) = producer
+        .publish(names::REQUESTS_CONTEXT, &assemble_req)
+        .await
+    {
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": format!("{e}")})),
+        )
+            .into_response();
+    }
+
+    state
+        .app
+        .event_log
+        .push(
+            "force_fire",
+            format!("Operator force-fire for {}", &id[..id.len().min(8)]),
+            Some(serde_json::json!({"activity_id": id, "operator_forced": true})),
+        )
+        .await;
+
+    (
+        StatusCode::OK,
+        Json(serde_json::json!({"status": "fired", "activity_id": id, "operator_forced": true})),
+    )
+        .into_response()
+}
+
+// ---------------------------------------------------------------------------
+// Pipeline metrics endpoint
+// ---------------------------------------------------------------------------
+
+async fn pipeline_metrics(State(state): State<Arc<PanelState>>) -> impl IntoResponse {
+    let metrics = state.app.pipeline_metrics.read().await;
+    Json(metrics.snapshot())
 }
 
 // ---------------------------------------------------------------------------

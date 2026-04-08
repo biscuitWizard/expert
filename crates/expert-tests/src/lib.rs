@@ -61,6 +61,7 @@ pub fn fake_fire_signal(activity_id: &str, stream_id: &str) -> FireSignal {
         trigger_event_seq: "1000-0".to_string(),
         last_fired_seq: None,
         timestamp: 2000,
+        operator_forced: false,
     }
 }
 
@@ -96,6 +97,7 @@ pub fn fake_episode(dim: usize) -> Episode {
         was_suppressed: false,
         recalled_event_indices: Vec::new(),
         created_at: 1000,
+        operator_forced: false,
     }
 }
 

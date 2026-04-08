@@ -43,6 +43,9 @@ pub struct Episode {
     pub recalled_event_indices: Vec<usize>,
     /// Unix ms.
     pub created_at: u64,
+    /// Whether this episode was triggered by operator force-fire (high-confidence training data).
+    #[serde(default)]
+    pub operator_forced: bool,
 }
 
 /// A pattern node in the RAG graph. Distilled summary of recurring
@@ -166,4 +169,7 @@ pub struct ContextPackage {
     pub rendered_prompt: String,
     /// Per-activity tool set (feedback tools + domain-specific tools).
     pub tool_definitions: Vec<crate::signals::ToolDefinition>,
+    /// Whether this invocation was triggered by an operator force-fire.
+    #[serde(default)]
+    pub operator_forced: bool,
 }

@@ -130,17 +130,24 @@ async fn bootstrap_activity(
         },
     });
 
-    let url = format!("{}/activities", config.orchestrator_url);
+    let url = format!("{}/activities/bootstrap", config.orchestrator_url);
 
-    // Retry loop: orchestrator may not be ready yet
     for attempt in 1..=30 {
-        match client.post(&url).json(&body).send().await {
+        match client.put(&url).json(&body).send().await {
             Ok(resp) if resp.status().is_success() => {
                 let data: serde_json::Value = resp.json().await?;
                 let activity_id = data["activity_id"]
                     .as_str()
                     .unwrap_or("unknown")
                     .to_string();
+                let reused = data["reused"].as_bool().unwrap_or(false);
+                let source = data["source"].as_str().unwrap_or("unknown");
+                info!(
+                    activity_id = %activity_id,
+                    reused,
+                    source,
+                    "bootstrap complete"
+                );
                 return Ok(activity_id);
             }
             Ok(resp) => {

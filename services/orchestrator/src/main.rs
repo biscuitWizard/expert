@@ -1,5 +1,6 @@
 mod api;
 pub mod event_log;
+pub mod metrics;
 mod panel;
 mod registry;
 mod workers;
@@ -13,6 +14,7 @@ use tracing::{info, warn};
 use event_log::EventLog;
 use expert_config::Config;
 use expert_redis::StreamProducer;
+use metrics::PipelineMetrics;
 use registry::ActivityRegistry;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -30,6 +32,7 @@ pub struct AppState {
     pub state_store: RwLock<expert_redis::StateStore>,
     pub event_log: Arc<EventLog>,
     pub warmup_status: RwLock<HashMap<String, ModelWarmupStatus>>,
+    pub pipeline_metrics: RwLock<PipelineMetrics>,
 }
 
 #[tokio::main]
@@ -71,6 +74,7 @@ async fn main() -> Result<()> {
         state_store: RwLock::new(state_store),
         event_log: event_log.clone(),
         warmup_status: RwLock::new(initial_warmup),
+        pipeline_metrics: RwLock::new(PipelineMetrics::new(100)),
     });
 
     // Spawn background workers

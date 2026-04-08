@@ -652,6 +652,7 @@ pub async fn spawn_invocation_complete_consumer(state: Arc<AppState>) {
 }
 
 async fn handle_invocation_complete(state: &AppState, signal: InvocationComplete) {
+    let now = now_ms();
     let mut registry = state.registry.write().await;
 
     let activity = match registry.activities.get_mut(&signal.activity_id) {
@@ -662,12 +663,40 @@ async fn handle_invocation_complete(state: &AppState, signal: InvocationComplete
         }
     };
 
+    let fire_received_at = activity.pending_fire.as_ref().map(|pf| pf.received_at);
+
     activity.pending_fire = None;
     if activity.state.lifecycle_state == ActivityLifecycle::Fired {
         activity.state.lifecycle_state = ActivityLifecycle::Active;
     }
 
     drop(registry);
+
+    if signal.success {
+        let mut metrics = state.pipeline_metrics.write().await;
+        if let Some(received) = fire_received_at {
+            let total = (now - received) as f64;
+            metrics.record_total_latency(total);
+
+            if let Some(llm_ms) = signal.duration_ms {
+                let llm = llm_ms as f64;
+                metrics.record_llm_invocation(llm);
+                let context_ms = total - llm;
+                if context_ms > 0.0 {
+                    metrics.record_context_assembly(context_ms);
+                }
+            }
+        }
+        if let Some(ref preview) = signal.response_preview {
+            if let Some(llm_ms) = signal.duration_ms {
+                if llm_ms > 0 {
+                    let approx_tokens = preview.split_whitespace().count() as f64 * 1.3;
+                    let tps = approx_tokens / (llm_ms as f64 / 1000.0);
+                    metrics.record_tokens_per_sec(tps);
+                }
+            }
+        }
+    }
 
     let mut detail = serde_json::json!({
         "activity_id": signal.activity_id,

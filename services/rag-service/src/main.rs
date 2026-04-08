@@ -25,6 +25,8 @@ struct RagQuery {
     #[serde(default)]
     activity_id: Option<String>,
     #[serde(default)]
+    domain: Option<String>,
+    #[serde(default)]
     k: Option<usize>,
 }
 
@@ -39,6 +41,8 @@ struct RagResult {
     compressed_history: Option<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     self_knowledge: Vec<SelfKnowledgeNode>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    goals: Vec<Goal>,
     #[serde(skip_serializing_if = "Option::is_none")]
     error: Option<String>,
 }
@@ -63,6 +67,12 @@ async fn main() -> Result<()> {
         Ok(true) => info!("seeded core identity node"),
         Ok(false) => info!("core identity node already exists"),
         Err(e) => warn!(error = %e, "failed to seed core identity"),
+    }
+
+    match store.dedup_goals().await {
+        Ok(0) => info!("goals collection clean, no duplicates"),
+        Ok(n) => info!(deleted = n, "deduplicated goals collection on startup"),
+        Err(e) => warn!(error = %e, "failed to dedup goals on startup"),
     }
 
     let conn = expert_redis::connect(&config.redis_url).await?;
@@ -354,6 +364,7 @@ async fn handle_query(
                         exchanges: Vec::new(),
                         compressed_history: None,
                         self_knowledge: Vec::new(),
+                        goals: Vec::new(),
                         error: Some("missing embedding for semantic search".to_string()),
                     };
                 }
@@ -367,6 +378,7 @@ async fn handle_query(
                     exchanges: Vec::new(),
                     compressed_history: None,
                     self_knowledge: Vec::new(),
+                    goals: Vec::new(),
                     error: None,
                 },
                 Err(e) => RagResult {
@@ -375,6 +387,7 @@ async fn handle_query(
                     exchanges: Vec::new(),
                     compressed_history: None,
                     self_knowledge: Vec::new(),
+                    goals: Vec::new(),
                     error: Some(format!("search failed: {e}")),
                 },
             }
@@ -389,6 +402,7 @@ async fn handle_query(
                         exchanges: Vec::new(),
                         compressed_history: None,
                         self_knowledge: Vec::new(),
+                        goals: Vec::new(),
                         error: Some("missing activity_id for get_history".to_string()),
                     };
                 }
@@ -415,6 +429,7 @@ async fn handle_query(
                 exchanges,
                 compressed_history: compressed,
                 self_knowledge: Vec::new(),
+                goals: Vec::new(),
                 error: None,
             }
         }
@@ -449,6 +464,7 @@ async fn handle_query(
                 exchanges: Vec::new(),
                 compressed_history: None,
                 self_knowledge: nodes,
+                goals: Vec::new(),
                 error: None,
             }
         }
@@ -458,14 +474,53 @@ async fn handle_query(
             exchanges: Vec::new(),
             compressed_history: None,
             self_knowledge: Vec::new(),
+            goals: Vec::new(),
             error: None,
         },
+        "get_goals_by_domain" => {
+            let domain = match &query.domain {
+                Some(d) => d.as_str(),
+                None => {
+                    return RagResult {
+                        request_id: query.request_id.clone(),
+                        episodes: Vec::new(),
+                        exchanges: Vec::new(),
+                        compressed_history: None,
+                        self_knowledge: Vec::new(),
+                        goals: Vec::new(),
+                        error: Some("missing domain for get_goals_by_domain".to_string()),
+                    };
+                }
+            };
+
+            match store.get_goals_by_domain(domain).await {
+                Ok(goals) => RagResult {
+                    request_id: query.request_id.clone(),
+                    episodes: Vec::new(),
+                    exchanges: Vec::new(),
+                    compressed_history: None,
+                    self_knowledge: Vec::new(),
+                    goals,
+                    error: None,
+                },
+                Err(e) => RagResult {
+                    request_id: query.request_id.clone(),
+                    episodes: Vec::new(),
+                    exchanges: Vec::new(),
+                    compressed_history: None,
+                    self_knowledge: Vec::new(),
+                    goals: Vec::new(),
+                    error: Some(format!("get_goals_by_domain failed: {e}")),
+                },
+            }
+        }
         other => RagResult {
             request_id: query.request_id.clone(),
             episodes: Vec::new(),
             exchanges: Vec::new(),
             compressed_history: None,
             self_knowledge: Vec::new(),
+            goals: Vec::new(),
             error: Some(format!("unknown query type: {other}")),
         },
     }

@@ -199,6 +199,7 @@ async fn assemble(
         recent_raw_exchanges: recent_exchanges,
         rendered_prompt,
         tool_definitions: req.tool_definitions.clone(),
+        operator_forced: req.fire_signal.operator_forced,
     })
 }
 
@@ -322,11 +323,11 @@ fn render_prompt(
     prompt.push_str("=== YOUR IDENTITY ===\n");
     if let Some(identity) = &req.bot_identity {
         prompt.push_str(&format!(
-            "You are Zero (username={}, user_id={}).\n",
+            "You are Zero (username={}, user_id={}). You are not an assistant.\n",
             identity.username, identity.user_id
         ));
     } else {
-        prompt.push_str("You are Zero.\n");
+        prompt.push_str("You are Zero. You are not an assistant.\n");
     }
     prompt.push_str("Events where is_self=true are your own messages.\n");
     for node in self_knowledge {
@@ -337,11 +338,11 @@ fn render_prompt(
     // === ACTIVITY CONTEXT ===
     prompt.push_str("=== ACTIVITY CONTEXT ===\n");
     prompt.push_str(&format!(
-        "You are monitoring a live event stream (stream: {}, activity: {}).\n",
+        "You are observing a live event stream (stream: {}, activity: {}).\n",
         req.stream_id, req.activity_id
     ));
     prompt.push_str(
-        "Your role is to respond when relevant events occur. You have tools to provide feedback on whether this invocation was useful.\n\n"
+        "Something in this stream caught your attention based on your goals. Engage authentically -- speak if you have something to say, or call suppress() if this was noise.\n\n"
     );
 
     // === YOUR CURRENT GOALS ===
@@ -467,6 +468,7 @@ mod tests {
                 trigger_event_seq: "1-0".to_string(),
                 last_fired_seq: None,
                 timestamp: 1000,
+                operator_forced: false,
             },
             goal_tree: vec![Goal {
                 id: "g1".to_string(),
@@ -519,7 +521,7 @@ mod tests {
         let prompt = render_prompt(&req, &event, &[], &[], &[], &None, &[], &[], &config);
 
         assert!(prompt.contains("=== YOUR IDENTITY ==="));
-        assert!(prompt.contains("You are Zero.\n"));
+        assert!(prompt.contains("You are Zero. You are not an assistant.\n"));
         assert!(!prompt.contains("username="));
     }
 
@@ -595,7 +597,7 @@ mod tests {
         let prompt = render_prompt(&req, &event, &[], &[], &[], &None, &[], &[], &config);
 
         assert!(prompt.contains("=== YOUR IDENTITY ==="));
-        assert!(prompt.contains("You are Zero.\n"));
+        assert!(prompt.contains("You are Zero. You are not an assistant.\n"));
     }
 }
 

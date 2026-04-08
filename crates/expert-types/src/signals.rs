@@ -17,6 +17,10 @@ pub struct FireSignal {
     pub last_fired_seq: Option<String>,
     /// Unix ms.
     pub timestamp: u64,
+    /// Set when an operator manually forced this fire via the debug panel.
+    /// Resulting training data should be treated as high-confidence.
+    #[serde(default)]
+    pub operator_forced: bool,
 }
 
 /// Bot identity resolved at adapter bootstrap (username, platform user ID).
@@ -150,6 +154,12 @@ pub struct InvocationComplete {
     /// Author display name from the trigger event metadata.
     #[serde(default)]
     pub author_name: Option<String>,
+    /// Total LLM invocation wall time in milliseconds.
+    #[serde(default)]
+    pub duration_ms: Option<u64>,
+    /// Whether this invocation was triggered by an operator force-fire.
+    #[serde(default)]
+    pub operator_forced: bool,
 }
 
 #[cfg(test)]
@@ -246,6 +256,7 @@ mod tests {
                 trigger_event_seq: "0-0".to_string(),
                 last_fired_seq: None,
                 timestamp: 0,
+                operator_forced: false,
             },
             goal_tree: vec![],
             tool_definitions: vec![],

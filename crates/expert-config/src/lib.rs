@@ -57,6 +57,11 @@ pub struct Config {
     pub medium_batch_size: usize,
     pub medium_learning_rate: f32,
 
+    // Cold-start scoring
+    pub cold_start_dm_fires: u64,
+    pub ssm_calibration_window: usize,
+    pub ssm_calibration_threshold: f32,
+
     // Ollama warmup
     pub warmup_interval_secs: u64,
     pub warmup_keep_alive: String,
@@ -122,6 +127,10 @@ impl Config {
             medium_label_threshold: env_parse("MEDIUM_LABEL_THRESHOLD", 20),
             medium_batch_size: env_parse("MEDIUM_BATCH_SIZE", 10),
             medium_learning_rate: env_parse("MEDIUM_LEARNING_RATE", 0.01),
+
+            cold_start_dm_fires: env_parse("COLD_START_DM_FIRES", 20),
+            ssm_calibration_window: env_parse("SSM_CALIBRATION_WINDOW", 50),
+            ssm_calibration_threshold: env_parse("SSM_CALIBRATION_THRESHOLD", 0.7),
 
             warmup_interval_secs: env_parse("WARMUP_INTERVAL_SECS", 120),
             warmup_keep_alive: env_or("WARMUP_KEEP_ALIVE", "30m"),

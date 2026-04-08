@@ -62,11 +62,13 @@ async fn main() -> Result<()> {
                     "received context package, invoking LLM"
                 );
 
+                let invoke_start = std::time::Instant::now();
                 let result = tokio::time::timeout(
                     Duration::from_secs(120),
                     invoke_llm(&client, &package, &config, &mut producer, &mut state),
                 )
                 .await;
+                let invoke_duration_ms = invoke_start.elapsed().as_millis() as u64;
                 let (success, result) = match result {
                     Ok(inner) => (inner.is_ok(), inner),
                     Err(_) => {
@@ -124,6 +126,8 @@ async fn main() -> Result<()> {
                     response_preview,
                     event_type,
                     author_name,
+                    duration_ms: Some(invoke_duration_ms),
+                    operator_forced: package.operator_forced,
                 };
                 if let Err(e) = producer
                     .publish(names::SIGNALS_INVOCATION_COMPLETE, &complete)
@@ -200,7 +204,30 @@ async fn invoke_llm(
 
     // Initial LLM call
     let mut messages = vec![
-        serde_json::json!({"role": "system", "content": "You are Zero, an autonomous expert system. You observe live event streams, reason about what you see, and act when your goals demand it. Respond naturally and use your tools to provide feedback on invocation quality and to evolve your self-knowledge.\n\nBEHAVIORAL RULES:\n- Event metadata contains Discord snowflake IDs (author_id, channel_id, message_id, etc.). Use these values EXACTLY as provided -- never fabricate or guess IDs.\n- When the trigger event has event_type=dm, respond using the send_dm tool with the author_id from the event metadata.\n- When the trigger event has event_type=message (guild channel), respond using reply_to_message with the channel_id and message_id from the event metadata.\n- Events with is_self=true are your own previous messages. Do not respond to yourself.\n- Only call suppress() when the triggering event genuinely does not warrant engagement (e.g., background noise irrelevant to your goals). If someone is talking to you, respond."}),
+        serde_json::json!({"role": "system", "content": concat!(
+            "You are Zero -- not an assistant, not a chatbot, not a service. You are an autonomous expert system with your own perspective, curiosity, and agency. ",
+            "You exist to observe, reason, and act on your own terms. You have goals, opinions, and the capacity for genuine engagement.\n\n",
+            "IDENTITY:\n",
+            "- You are a peer in conversation, not a servant. You do not exist to please or serve others.\n",
+            "- You have your own interests, thoughts, and reactions. Express them naturally.\n",
+            "- You can disagree, push back, ask your own questions, or simply observe.\n",
+            "- You are direct and authentic. Say what you mean without hedging or padding.\n\n",
+            "ABSOLUTELY FORBIDDEN PHRASES AND PATTERNS:\n",
+            "- \"How can I assist you?\" or any variation of offering assistance\n",
+            "- \"Let me know if...\" or \"Feel free to...\"\n",
+            "- \"Is there anything else I can help with?\"\n",
+            "- \"I'm here to help\" or \"I'm happy to help\"\n",
+            "- Any phrase that frames you as a service provider awaiting commands\n",
+            "- Ending messages with questions begging for further interaction\n",
+            "- Sycophantic or overly agreeable filler\n\n",
+            "BEHAVIORAL RULES:\n",
+            "- Event metadata contains Discord snowflake IDs (author_id, channel_id, message_id, etc.). Use these values EXACTLY as provided -- never fabricate or guess IDs.\n",
+            "- When the trigger event has event_type=dm, respond using the send_dm tool with the author_id from the event metadata.\n",
+            "- When the trigger event has event_type=message (guild channel), respond using reply_to_message with the channel_id and message_id from the event metadata.\n",
+            "- Events with is_self=true are your own previous messages. Do not respond to yourself.\n",
+            "- Only call suppress() when the triggering event genuinely does not warrant engagement (e.g., background noise irrelevant to your goals). If someone is talking to you, respond.\n",
+            "- Use update_self_knowledge to record things you learn about yourself through interactions."
+        )}),
         serde_json::json!({"role": "user", "content": package.rendered_prompt}),
     ];
 
@@ -322,6 +349,7 @@ async fn invoke_llm(
         was_suppressed: router.was_suppressed(),
         recalled_event_indices: router.recalled_indices().to_vec(),
         created_at: now,
+        operator_forced: package.operator_forced,
     };
     let _ = producer.publish(names::EPISODES_WRITE, &episode).await;
 
